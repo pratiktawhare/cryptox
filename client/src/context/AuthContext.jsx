@@ -24,6 +24,7 @@ export function AuthProvider({ children }) {
                     const meRes = await api.get('/auth/me');
                     setUser(meRes.data.user);
                 } catch (err) {
+                    localStorage.removeItem('cryptox_token');
                     setUser(null); // Not logged in
                 }
             }
@@ -36,15 +37,24 @@ export function AuthProvider({ children }) {
 
     const login = async (username, password) => {
         const res = await api.post('/auth/login', { username, password });
+        if (res.data.token) {
+            localStorage.setItem('cryptox_token', res.data.token);
+        }
         setUser(res.data.user);
     };
 
     const logout = async () => {
-        await api.post('/auth/logout');
+        try {
+            await api.post('/auth/logout');
+        } catch (e) { /* ignore network error on logout */ }
+        localStorage.removeItem('cryptox_token');
         setUser(null);
     };
 
-    const finishSetup = (userData) => {
+    const finishSetup = (userData, token) => {
+        if (token) {
+            localStorage.setItem('cryptox_token', token);
+        }
         setIsInitialized(true);
         setUser(userData);
     };

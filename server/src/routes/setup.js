@@ -95,7 +95,8 @@ router.post('/initialize', async (req, res) => {
 
         res.status(201).json({
             message: 'Setup complete! Welcome to CryptoX.',
-            user: user.toJSON()
+            user: user.toJSON(),
+            token: token
         });
 
     } catch (error) {

@@ -10,6 +10,18 @@ const api = axios.create({
     timeout: 15000,        // 15s timeout — prevents hanging requests
 });
 
+// Request interceptor — attach JWT from localStorage
+api.interceptors.request.use(
+    (config) => {
+        const token = localStorage.getItem('cryptox_token');
+        if (token) {
+            config.headers.Authorization = `Bearer ${token}`;
+        }
+        return config;
+    },
+    (error) => Promise.reject(error)
+);
+
 // Response interceptor — handle auth errors globally
 api.interceptors.response.use(
     (response) => response,

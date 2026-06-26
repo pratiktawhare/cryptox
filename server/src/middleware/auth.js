@@ -2,7 +2,15 @@ const jwt = require('jsonwebtoken');
 const config = require('../config/env');
 
 function authMiddleware(req, res, next) {
-    const token = req.cookies?.cryptox_token;
+    let token = req.cookies?.cryptox_token;
+
+    // Fallback: Check Authorization header (Bearer token)
+    if (!token && req.headers.authorization) {
+        const parts = req.headers.authorization.split(' ');
+        if (parts.length === 2 && parts[0] === 'Bearer') {
+            token = parts[1];
+        }
+    }
 
     if (!token) {
         return res.status(401).json({ error: 'Authentication required. Please log in.' });

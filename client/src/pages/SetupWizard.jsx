@@ -42,7 +42,7 @@ const SetupWizard = () => {
         setError('');
         try {
             const res = await api.post('/setup/initialize', formData);
-            finishSetup(res.data.user);
+            finishSetup(res.data.user, res.data.token);
             navigate('/');
         } catch (err) {
             setError(err.response?.data?.error || 'Setup failed. Please try again.');
