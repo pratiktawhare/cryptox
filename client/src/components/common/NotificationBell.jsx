@@ -2,9 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSocket } from '../../context/SocketContext';
 import { useAuth } from '../../context/AuthContext';
 import { playSound } from '../../utils/soundAlert';
-import axios from 'axios';
-
-const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import api from '../../services/api';
 
 // ─── Formatters ──────────────────────────────────────────────────────────────
 
@@ -51,7 +49,7 @@ export default function NotificationBell() {
         if (!user) return;
         setLoading(true);
         try {
-            const { data } = await axios.get(`${API}/api/notifications`, { withCredentials: true });
+            const { data } = await api.get('/notifications');
             if (data.success) {
                 setNotifications(data.notifications || []);
                 setUnreadCount((data.notifications || []).filter(n => !n.isRead).length);
@@ -108,7 +106,7 @@ export default function NotificationBell() {
 
     async function markRead(id) {
         try {
-            await axios.patch(`${API}/api/notifications/${id}/read`, {}, { withCredentials: true });
+            await api.patch(`/notifications/${id}/read`);
             setNotifications(prev => prev.map(n => n.id === id || n._id === id ? { ...n, isRead: true } : n));
             setUnreadCount(c => Math.max(0, c - 1));
         } catch { /* silent */ }
@@ -116,7 +114,7 @@ export default function NotificationBell() {
 
     async function markAllRead() {
         try {
-            await axios.post(`${API}/api/notifications/mark-all-read`, {}, { withCredentials: true });
+            await api.post('/notifications/mark-all-read');
             setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
             setUnreadCount(0);
         } catch { /* silent */ }
@@ -124,7 +122,7 @@ export default function NotificationBell() {
 
     async function deleteOne(id) {
         try {
-            await axios.delete(`${API}/api/notifications/${id}`, { withCredentials: true });
+            await api.delete(`/notifications/${id}`);
             const n = notifications.find(x => (x.id || x._id) === id);
             setNotifications(prev => prev.filter(x => (x.id || x._id) !== id));
             if (n && !n.isRead) setUnreadCount(c => Math.max(0, c - 1));

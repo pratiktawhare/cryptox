@@ -9,10 +9,11 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import { useAuth } from './AuthContext';
 
-const SOCKET_URL =
-    typeof window !== 'undefined'
+const SOCKET_URL = import.meta.env.VITE_API_URL
+    ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '')
+    : (typeof window !== 'undefined'
         ? `${window.location.protocol}//${window.location.hostname}:3001`
-        : 'http://localhost:3001';
+        : 'http://localhost:3001');
 
 const SocketContext = createContext({ socket: null, connected: false });
 

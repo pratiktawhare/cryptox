@@ -10,6 +10,9 @@ dotenv.config({ path: path.join(__dirname, '../../.env') });
 // ═══════════════════════════════════════════════════════════
 function ensureSecrets() {
     const envPath = path.join(__dirname, '../../.env');
+    if (!fs.existsSync(envPath)) {
+        return;
+    }
     let envContent = fs.readFileSync(envPath, 'utf-8');
     let changed = false;
 

@@ -11,10 +11,11 @@ import { useTradingMode } from "../context/TradingModeContext";
 import TradeConfirmDialog from "../components/trading/TradeConfirmDialog";
 import NotificationBell from "../components/common/NotificationBell";
 
-const SOCKET_URL =
-  typeof window !== "undefined"
+const SOCKET_URL = import.meta.env.VITE_API_URL
+  ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '')
+  : (typeof window !== "undefined"
     ? window.location.protocol + "//" + window.location.hostname + ":3001"
-    : "http://localhost:3001";
+    : "http://localhost:3001");
 
 function fmt(n, dec = 2) {
   if (n === null || n === undefined || isNaN(n)) return "-";
