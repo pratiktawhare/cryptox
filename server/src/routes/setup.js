@@ -89,7 +89,7 @@ router.post('/initialize', async (req, res) => {
         res.cookie('cryptox_token', token, {
             httpOnly: true,
             secure: config.nodeEnv === 'production',
-            sameSite: 'lax',
+            sameSite: config.nodeEnv === 'production' ? 'none' : 'lax',
             maxAge: 24 * 60 * 60 * 1000 // 24h
         });
 

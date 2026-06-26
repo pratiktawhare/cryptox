@@ -42,7 +42,7 @@ router.post('/login', async (req, res) => {
         res.cookie('cryptox_token', token, {
             httpOnly: true,
             secure: config.nodeEnv === 'production',
-            sameSite: 'lax',
+            sameSite: config.nodeEnv === 'production' ? 'none' : 'lax',
             maxAge: 24 * 60 * 60 * 1000
         });
 
@@ -59,7 +59,11 @@ router.post('/login', async (req, res) => {
 
 // POST /api/auth/logout
 router.post('/logout', (req, res) => {
-    res.clearCookie('cryptox_token');
+    res.clearCookie('cryptox_token', {
+        httpOnly: true,
+        secure: config.nodeEnv === 'production',
+        sameSite: config.nodeEnv === 'production' ? 'none' : 'lax'
+    });
     res.json({ message: 'Logged out successfully' });
 });
 
