@@ -1,0 +1,44 @@
+# ─── Dependencies ────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ─── Environment Variables (NEVER commit secrets) ────────────
+.env
+.env.*
+!.env.example
+
+# ─── Build Outputs ───────────────────────────────────────────
+dist/
+dist-ssr/
+build/
+
+# ─── Logs ────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ─── OS / Editor ─────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ─── Vite ────────────────────────────────────────────────────
+*.local
+
+# ─── Misc ────────────────────────────────────────────────────
+test_delta.js
+cleanup_db.js
+coverage/
+.nyc_output/

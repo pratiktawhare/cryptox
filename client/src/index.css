@@ -1,0 +1,215 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════
+   CryptoX Design System — Light Theme (default)
+   ═══════════════════════════════════════════════════════════ */
+:root {
+  --crypto-bg:          #f0f2f5;
+  --crypto-bg-subtle:   #e8eaed;
+  --crypto-card:        #ffffff;
+  --crypto-card-hover:  #f8f9fa;
+  --crypto-border:      #dce0e5;
+  --crypto-input:       #f5f6f8;
+  --crypto-text:        #3c4257;
+  --crypto-heading:     #0a0f1e;
+  --crypto-muted:       #697386;
+
+  --crypto-primary:     #635bff;
+  --crypto-primary-hover: #5146e6;
+  --crypto-success:     #0cce6b;
+  --crypto-danger:      #e5484d;
+  --crypto-warning:     #f5a524;
+  --crypto-info:        #0091ff;
+
+  --crypto-gradient-start: #635bff;
+  --crypto-gradient-end:   #0091ff;
+
+  --crypto-glow:        rgba(99, 91, 255, 0.15);
+  --crypto-shadow:      0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --crypto-shadow-lg:   0 10px 25px rgba(0,0,0,0.06), 0 4px 10px rgba(0,0,0,0.04);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CryptoX Design System — Dark Theme
+   ═══════════════════════════════════════════════════════════ */
+.dark {
+  --crypto-bg:          #0a0e17;
+  --crypto-bg-subtle:   #0f1420;
+  --crypto-card:        #141926;
+  --crypto-card-hover:  #1a2035;
+  --crypto-border:      #1e2536;
+  --crypto-input:       #0f1420;
+  --crypto-text:        #a3adc2;
+  --crypto-heading:     #e8ecf4;
+  --crypto-muted:       #5e6b83;
+
+  --crypto-primary:     #635bff;
+  --crypto-primary-hover: #7c75ff;
+  --crypto-success:     #00e676;
+  --crypto-danger:      #ff4d6a;
+  --crypto-warning:     #f5a524;
+  --crypto-info:        #38bdf8;
+
+  --crypto-gradient-start: #635bff;
+  --crypto-gradient-end:   #38bdf8;
+
+  --crypto-glow:        rgba(99, 91, 255, 0.25);
+  --crypto-shadow:      0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
+  --crypto-shadow-lg:   0 10px 25px rgba(0,0,0,0.4), 0 4px 10px rgba(0,0,0,0.3);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Tailwind v4 Theme Mapping
+   ═══════════════════════════════════════════════════════════ */
+@theme {
+  --color-crypto-bg:            var(--crypto-bg);
+  --color-crypto-bg-subtle:     var(--crypto-bg-subtle);
+  --color-crypto-card:          var(--crypto-card);
+  --color-crypto-card-hover:    var(--crypto-card-hover);
+  --color-crypto-border:        var(--crypto-border);
+  --color-crypto-input:         var(--crypto-input);
+  --color-crypto-text:          var(--crypto-text);
+  --color-crypto-heading:       var(--crypto-heading);
+  --color-crypto-muted:         var(--crypto-muted);
+  --color-crypto-primary:       var(--crypto-primary);
+  --color-crypto-primary-hover: var(--crypto-primary-hover);
+  --color-crypto-success:       var(--crypto-success);
+  --color-crypto-danger:        var(--crypto-danger);
+  --color-crypto-warning:       var(--crypto-warning);
+  --color-crypto-info:          var(--crypto-info);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Base Styles
+   ═══════════════════════════════════════════════════════════ */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-color: var(--crypto-bg);
+  color: var(--crypto-text);
+  transition: background-color 0.3s ease, color 0.3s ease;
+  margin: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Scrollbar
+   ═══════════════════════════════════════════════════════════ */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--crypto-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--crypto-muted);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Animations
+   ═══════════════════════════════════════════════════════════ */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInScale {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 var(--crypto-glow); }
+  50%      { box-shadow: 0 0 20px 4px var(--crypto-glow); }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
+  20%, 40%, 60%, 80% { transform: translateX(4px); }
+}
+
+@keyframes live-dot {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.3; }
+}
+
+@keyframes number-tick {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in       { animation: fadeIn 0.4s ease-out both; }
+.animate-fade-in-scale { animation: fadeInScale 0.3s ease-out both; }
+.animate-pulse-glow    { animation: pulse-glow 2s ease-in-out infinite; }
+.animate-shake         { animation: shake 0.4s ease-in-out; }
+.animate-live-dot      { animation: live-dot 1.5s ease-in-out infinite; }
+.animate-number-tick   { animation: number-tick 0.25s ease-out; }
+
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent 0%, var(--crypto-border) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Utility Classes
+   ═══════════════════════════════════════════════════════════ */
+.glass {
+  background: color-mix(in srgb, var(--crypto-card) 70%, transparent);
+  backdrop-filter: blur(12px) saturate(1.5);
+  -webkit-backdrop-filter: blur(12px) saturate(1.5);
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, var(--crypto-gradient-start), var(--crypto-gradient-end));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-border {
+  position: relative;
+}
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, var(--crypto-gradient-start), var(--crypto-gradient-end));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Staggered children animation */
+.stagger-children > * {
+  animation: fadeIn 0.4s ease-out both;
+}
+.stagger-children > *:nth-child(1) { animation-delay: 0.05s; }
+.stagger-children > *:nth-child(2) { animation-delay: 0.10s; }
+.stagger-children > *:nth-child(3) { animation-delay: 0.15s; }
+.stagger-children > *:nth-child(4) { animation-delay: 0.20s; }
+.stagger-children > *:nth-child(5) { animation-delay: 0.25s; }
+.stagger-children > *:nth-child(6) { animation-delay: 0.30s; }
