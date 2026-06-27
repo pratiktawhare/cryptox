@@ -6,6 +6,7 @@
  */
 
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTradingMode } from '../../context/TradingModeContext';
 
 export default function TradingModeToggle() {
@@ -33,7 +34,7 @@ export default function TradingModeToggle() {
                 onClick={handleClick}
                 title={isLive ? 'Switch to Paper Trading (safe)' : 'Switch to Live Trading'}
                 className={`
-                    relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold
+                    relative flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold
                     border transition-all duration-300 cursor-pointer select-none
                     ${isLive
                         ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'
@@ -42,18 +43,18 @@ export default function TradingModeToggle() {
                 `}
             >
                 {/* Animated dot */}
-                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isLive ? 'bg-emerald-400 animate-live-dot' : 'bg-crypto-primary'}`} />
+                <span className={`w-1 h-1 rounded-full flex-shrink-0 ${isLive ? 'bg-emerald-400 animate-live-dot' : 'bg-crypto-primary'}`} />
 
                 {isLive ? (
                     <>
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                        <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
                         </svg>
                         LIVE
                     </>
                 ) : (
                     <>
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                        <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 00-3.7-3.7 48.678 48.678 0 00-7.324 0 4.006 4.006 0 00-3.7 3.7c-.017.22-.032.441-.046.662M19.5 12l3-3m-3 3l-3-3m-12 3c0 1.232.046 2.453.138 3.662a4.006 4.006 0 003.7 3.7 48.656 48.656 0 007.324 0 4.006 4.006 0 003.7-3.7c.017-.22.032-.441.046-.662M4.5 12l3 3m-3-3l-3 3" />
                         </svg>
                         PAPER
@@ -62,9 +63,9 @@ export default function TradingModeToggle() {
             </button>
 
             {/* Confirmation Modal — only shown when switching PAPER → LIVE */}
-            {confirming && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
-                    <div className="w-full max-w-sm mx-4 bg-crypto-card border border-emerald-500/30 rounded-2xl overflow-hidden shadow-2xl"
+            {confirming && createPortal(
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 overflow-y-auto animate-fade-in">
+                    <div className="w-full max-w-sm bg-crypto-card border border-emerald-500/30 rounded-2xl overflow-hidden shadow-2xl my-auto"
                          style={{ boxShadow: '0 0 60px #10b98120' }}>
                         {/* Accent */}
                         <div className="h-1 bg-gradient-to-r from-emerald-600 to-emerald-400" />
@@ -114,7 +115,8 @@ export default function TradingModeToggle() {
                             </div>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
         </>
     );

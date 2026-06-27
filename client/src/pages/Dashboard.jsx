@@ -105,7 +105,7 @@ const Dashboard = () => {
         <div className="min-h-screen bg-crypto-bg">
             {/* ── Top bar ── */}
             <header className="sticky top-0 z-30 bg-crypto-card/80 backdrop-blur-lg border-b border-crypto-border">
-                <div className="max-w-[1440px] mx-auto px-4 md:px-6 h-14 flex items-center justify-between">
+                <div className="max-w-[1440px] mx-auto px-4 md:px-6 h-14 flex items-center justify-between relative">
                     {/* Left */}
                     <div className="flex items-center gap-4">
                         <div className="flex items-center gap-2">
@@ -192,10 +192,10 @@ const Dashboard = () => {
 
                         <div className="hidden sm:block h-5 w-px bg-crypto-border" />
 
-                        {/* LIVE / PAPER toggle */}
-                        <TradingModeToggle />
-
-                        <div className="h-5 w-px bg-crypto-border" />
+                        {/* Middle Centered Toggle */}
+                        <div className="absolute left-[120px] sm:left-1/2 -translate-x-0 sm:-translate-x-1/2 flex items-center justify-center">
+                            <TradingModeToggle />
+                        </div>
 
                         {/* Notification Bell */}
                         <NotificationBell />

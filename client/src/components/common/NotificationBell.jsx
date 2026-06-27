@@ -189,19 +189,10 @@ export default function NotificationBell() {
             {open && (
                 <div
                     ref={dropdownRef}
+                    className="fixed sm:absolute top-16 sm:top-12 left-4 right-4 sm:left-auto sm:right-0 w-[calc(100vw-2rem)] sm:w-[380px] bg-crypto-card border border-crypto-border rounded-2xl shadow-2xl overflow-hidden z-[9999]"
                     style={{
-                        position: 'absolute',
-                        top: '48px',
-                        right: 0,
-                        width: '380px',
-                        maxWidth: '95vw',
                         background: 'rgba(15,10,30,0.97)',
                         backdropFilter: 'blur(20px)',
-                        border: '1px solid rgba(167,139,250,0.3)',
-                        borderRadius: '16px',
-                        boxShadow: '0 25px 60px rgba(0,0,0,0.6)',
-                        zIndex: 9999,
-                        overflow: 'hidden',
                     }}
                 >
                     {/* Header */}
