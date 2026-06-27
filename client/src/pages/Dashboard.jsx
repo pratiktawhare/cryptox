@@ -192,10 +192,12 @@ const Dashboard = () => {
 
                         <div className="hidden sm:block h-5 w-px bg-crypto-border" />
 
-                        {/* Middle Centered Toggle */}
-                        <div className="absolute left-[120px] sm:left-1/2 -translate-x-0 sm:-translate-x-1/2 flex items-center justify-center">
+                        {/* LIVE / PAPER toggle */}
+                        <div className="absolute left-[120px] sm:relative sm:left-auto flex items-center justify-center">
                             <TradingModeToggle />
                         </div>
+
+                        <div className="hidden sm:block h-5 w-px bg-crypto-border" />
 
                         {/* Notification Bell */}
                         <NotificationBell />
