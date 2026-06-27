@@ -61,7 +61,7 @@ app.use('/api/paper',         paperRoutes);
 app.use('/api/analytics',     analyticsRoutes);
 app.use('/api/notifications', notificationRoutes);
 
-app.get('/api/health', (_req, res) => {
+const healthHandler = (_req, res) => {
     res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
@@ -71,7 +71,10 @@ app.get('/api/health', (_req, res) => {
             count: productCatalog.getAll().length,
         }
     });
-});
+};
+
+app.get('/api/health', healthHandler);
+app.get('/health', healthHandler);
 
 // ─── Socket.IO events ────────────────────────────────────
 io.on('connection', (socket) => {

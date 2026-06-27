@@ -10,9 +10,18 @@ const api = axios.create({
     timeout: 15000,        // 15s timeout — prevents hanging requests
 });
 
+let lastRequestTime = Date.now();
+
 // Request interceptor — attach JWT from localStorage
 api.interceptors.request.use(
     (config) => {
+        // Track the last request time for keep-alive check.
+        // We skip updating the timestamp for the keep-alive health check itself.
+        const isHealthCheck = config.url && (config.url.endsWith('/health') || config.url === 'health');
+        if (!isHealthCheck) {
+            lastRequestTime = Date.now();
+        }
+
         const token = localStorage.getItem('cryptox_token');
         if (token) {
             config.headers.Authorization = `Bearer ${token}`;
@@ -33,5 +42,18 @@ api.interceptors.response.use(
         return Promise.reject(error);
     }
 );
+
+// Keep-alive mechanism: sends a small health check request every 25 minutes
+// if no other request has been sent to the backend in that time.
+const KEEPALIVE_INTERVAL = 25 * 60 * 1000; // 25 minutes
+setInterval(() => {
+    const now = Date.now();
+    if (now - lastRequestTime >= KEEPALIVE_INTERVAL) {
+        lastRequestTime = now;
+        api.get('/health').catch((err) => {
+            console.warn('Keep-alive ping failed (backend may be down or starting up):', err.message);
+        });
+    }
+}, 60 * 1000); // Check every 60 seconds
 
 export default api;
