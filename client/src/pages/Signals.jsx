@@ -43,6 +43,7 @@ function fmtPrice(n) {
 // ─── Signal Card ──────────────────────────────────────────────────────────────
 
 function SignalCard({ signal, onTrade }) {
+    const navigate = useNavigate();
     const [expanded, setExpanded] = useState(false);
     const style = actionStyle(signal.action);
     const conf  = confidenceColor(signal.confidence);
@@ -66,8 +67,15 @@ function SignalCard({ signal, onTrade }) {
                         </div>
                         <div>
                             <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="text-xs md:text-sm font-bold text-crypto-heading">
+                                <span
+                                    onClick={() => navigate(`/?coin=${signal.symbol}`)}
+                                    className="text-xs md:text-sm font-bold text-crypto-heading hover:text-crypto-primary cursor-pointer transition-colors duration-150 flex items-center gap-1 group/sym hover:underline decoration-crypto-primary/40 underline-offset-4"
+                                    title={`View ${signal.symbol.replace('USD', '/USD')} Chart`}
+                                >
                                     {signal.symbol.replace('USD', '/USD')}
+                                    <svg className="w-3 h-3 text-crypto-muted group-hover/sym:text-crypto-primary transition-colors duration-150" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 14.25v2.25m3-4.5v4.5m3-6.75v6.75m3-9v9M6 20.25h12A2.25 2.25 0 0020.25 18V6A2.25 2.25 0 0018 3.75H6A2.25 2.25 0 003.75 6v12A2.25 2.25 0 006 20.25z" />
+                                    </svg>
                                 </span>
                                 <span className={`text-[10px] md:text-xs font-semibold px-1.5 py-0.5 rounded-md ${style.bg} ${style.text} border ${style.border}`}>
                                     {signal.action}
