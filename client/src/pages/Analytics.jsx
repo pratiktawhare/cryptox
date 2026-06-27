@@ -15,6 +15,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { useTradingMode } from '../context/TradingModeContext';
 import NotificationBell from '../components/common/NotificationBell';
+import MobileBottomNav from '../components/layout/MobileBottomNav';
 
 // ─── Mini SVG Equity Curve ────────────────────────────────────────────────────
 
@@ -141,13 +142,13 @@ function WinLossDonut({ wins, losses, timeouts = 0 }) {
 
 function StatCard({ label, value, sub, color = 'text-crypto-heading', icon }) {
     return (
-        <div className="bg-crypto-card border border-crypto-border rounded-xl p-4 hover:border-crypto-primary/20 transition-colors">
+        <div className="bg-crypto-card border border-crypto-border rounded-xl p-3 md:p-4 hover:border-crypto-primary/20 transition-colors">
             <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] font-medium text-crypto-muted uppercase tracking-wider">{label}</span>
-                {icon && <span className="text-base">{icon}</span>}
+                <span className="text-[10px] md:text-[11px] font-medium text-crypto-muted uppercase tracking-wider">{label}</span>
+                {icon && <span className="text-sm md:text-base">{icon}</span>}
             </div>
-            <p className={`text-xl font-bold tabular-nums ${color}`}>{value ?? '—'}</p>
-            {sub && <p className="text-[11px] text-crypto-muted mt-0.5">{sub}</p>}
+            <p className={`text-base md:text-xl font-bold tabular-nums ${color}`}>{value ?? '—'}</p>
+            {sub && <p className="text-[10px] md:text-[11px] text-crypto-muted mt-0.5">{sub}</p>}
         </div>
     );
 }
@@ -205,7 +206,7 @@ export default function Analytics() {
     return (
         <div className="min-h-screen bg-crypto-bg text-crypto-text">
             {/* Header */}
-            <header className="sticky top-0 z-40 bg-crypto-nav/90 backdrop-blur-md border-b border-crypto-border">
+            <header className="sticky top-0 z-40 bg-crypto-card/90 backdrop-blur-md border-b border-crypto-border">
                 <div className="max-w-[1440px] mx-auto px-4 md:px-6 h-14 flex items-center justify-between gap-4">
                     <div className="flex items-center gap-3">
                         <button
@@ -239,7 +240,7 @@ export default function Analytics() {
                 </div>
 
                 {/* Tabs */}
-                <div className="max-w-[1440px] mx-auto px-4 md:px-6 flex gap-1 pb-2">
+                <div className="max-w-[1440px] mx-auto px-4 md:px-6 flex gap-1 pb-2 overflow-x-auto no-scrollbar">
                     {TABS.map(tab => (
                         <button
                             key={tab.key}
@@ -256,9 +257,9 @@ export default function Analytics() {
                 </div>
             </header>
 
-            <main className="max-w-[1440px] mx-auto px-4 md:px-6 py-6 space-y-6">
+            <main className="max-w-[1440px] mx-auto px-4 md:px-6 py-3 md:py-6 pb-24 md:pb-6 space-y-4 md:space-y-6">
                 {loading ? (
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
                         {[...Array(8)].map((_, i) => (
                             <div key={i} className="bg-crypto-card border border-crypto-border rounded-xl h-24 animate-pulse" />
                         ))}
@@ -267,9 +268,9 @@ export default function Analytics() {
                     <>
                         {/* ── OVERVIEW TAB ── */}
                         {activeTab === 'overview' && (
-                            <div className="space-y-6 animate-fade-in">
+                            <div className="space-y-3 md:space-y-6 animate-fade-in">
                                 {/* Top KPIs */}
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
                                     <StatCard label="Paper Equity"    value={`$${(wallet?.equity ?? 0).toFixed(2)}`}   sub={`Started $${(wallet?.startingBalance ?? 10000).toFixed(0)}`} color={wallet?.totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'} icon="📄" />
                                     <StatCard label="Paper Return"    value={`${wallet?.returnPct >= 0 ? '+' : ''}${(wallet?.returnPct ?? 0).toFixed(2)}%`} sub={`PnL: $${(wallet?.totalPnl ?? 0).toFixed(2)}`} color={(wallet?.returnPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'} icon="📈" />
                                     <StatCard label="Win Rate"        value={`${wallet?.winRate ?? 0}%`}               sub={`${wallet?.totalTrades ?? 0} paper trades`}                color="text-crypto-heading" icon="🎯" />
@@ -277,7 +278,7 @@ export default function Analytics() {
                                 </div>
 
                                 {/* Signal KPIs */}
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
                                     <StatCard label="AI Signals"      value={signals?.total ?? 0}                      sub="Total generated"                                          color="text-crypto-heading" icon="🤖" />
                                     <StatCard label="Signal Win Rate" value={signals?.winRate ? `${signals.winRate}%` : '—'} sub={`${signals?.wins ?? 0} wins`}                     color="text-crypto-primary" icon="⚡" />
                                     <StatCard label="Avg R/R"         value={signals?.avgRR ? `1:${signals.avgRR}` : '—'}   sub="Achieved R/R ratio"                               color="text-crypto-heading" icon="⚖️" />
@@ -286,7 +287,7 @@ export default function Analytics() {
 
                                 {/* Equity Curve */}
                                 <div className="bg-crypto-card border border-crypto-border rounded-xl overflow-hidden">
-                                    <div className="px-5 py-4 border-b border-crypto-border flex items-center justify-between">
+                                    <div className="px-4 py-3 md:px-5 md:py-4 border-b border-crypto-border flex items-center justify-between">
                                         <div>
                                             <h2 className="text-sm font-bold text-crypto-heading">Equity Curve</h2>
                                             <p className="text-xs text-crypto-muted mt-0.5">{isPaper ? 'Paper' : 'Live'} account equity over time</p>
@@ -297,23 +298,23 @@ export default function Analytics() {
                                             </span>
                                         )}
                                     </div>
-                                    <div className="p-5">
+                                    <div className="p-3 md:p-5">
                                         <EquityCurve points={equity} width={800} height={200} />
                                     </div>
                                 </div>
 
                                 {/* Win/Loss + Summary */}
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div className="bg-crypto-card border border-crypto-border rounded-xl p-5">
-                                        <h3 className="text-sm font-bold text-crypto-heading mb-4">Signal Outcomes</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-6">
+                                    <div className="bg-crypto-card border border-crypto-border rounded-xl p-4 md:p-5">
+                                        <h3 className="text-sm font-bold text-crypto-heading mb-3 md:mb-4">Signal Outcomes</h3>
                                         <WinLossDonut
                                             wins={signals?.wins ?? 0}
                                             losses={(signals?.total ?? 0) - (signals?.wins ?? 0) - ((signals?.total ?? 0) - (signals?.wins ?? 0))}
                                             timeouts={0}
                                         />
                                     </div>
-                                    <div className="bg-crypto-card border border-crypto-border rounded-xl p-5">
-                                        <h3 className="text-sm font-bold text-crypto-heading mb-4">Trade Performance</h3>
+                                    <div className="bg-crypto-card border border-crypto-border rounded-xl p-4 md:p-5">
+                                        <h3 className="text-sm font-bold text-crypto-heading mb-3 md:mb-4">Trade Performance</h3>
                                         <WinLossDonut
                                             wins={wallet?.totalWins ?? 0}
                                             losses={wallet?.totalLosses ?? 0}
@@ -326,7 +327,7 @@ export default function Analytics() {
 
                         {/* ── AI SIGNALS TAB ── */}
                         {activeTab === 'signals' && (
-                            <div className="space-y-6 animate-fade-in">
+                            <div className="space-y-4 md:space-y-6 animate-fade-in">
                                 <div className="bg-crypto-card border border-crypto-border rounded-xl overflow-hidden">
                                     <div className="px-5 py-4 border-b border-crypto-border">
                                         <h2 className="text-sm font-bold text-crypto-heading">Signal Accuracy by Symbol</h2>
@@ -384,7 +385,7 @@ export default function Analytics() {
 
                         {/* ── SELF-LEARNING TAB ── */}
                         {activeTab === 'learning' && (
-                            <div className="space-y-6 animate-fade-in">
+                            <div className="space-y-4 md:space-y-6 animate-fade-in">
                                 {/* Global Context */}
                                 {learning?.global ? (
                                     <div className="bg-crypto-card border border-crypto-primary/20 rounded-xl p-5"
@@ -394,7 +395,7 @@ export default function Analytics() {
                                             <h2 className="text-sm font-bold text-crypto-heading">Global AI Learning Context</h2>
                                             <span className="text-xs text-crypto-muted ml-auto">{learning.global.totalSignals} signals analysed</span>
                                         </div>
-                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3">
                                             <StatCard label="Global Win Rate" value={learning.global.globalWinRate} color="text-crypto-heading" icon="🎯" />
                                             <StatCard label="Avg R/R" value={`1:${learning.global.avgRRachieved}`} color="text-crypto-primary" icon="⚖️" />
                                             <StatCard label="Total Wins" value={learning.global.wins} color="text-emerald-400" icon="✅" />
@@ -421,7 +422,7 @@ export default function Analytics() {
 
                                 {/* Top & Under performers */}
                                 {learning?.topPerformers?.length > 0 && (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-6">
                                         <div className="bg-crypto-card border border-crypto-border rounded-xl overflow-hidden">
                                             <div className="px-5 py-3 border-b border-crypto-border flex items-center gap-2">
                                                 <span>✅</span>
@@ -485,7 +486,7 @@ export default function Analytics() {
 
                         {/* ── BEST / WORST TAB ── */}
                         {activeTab === 'trades' && (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-6 animate-fade-in">
                                 {['best', 'worst'].map(type => {
                                     const trades = bestWorst?.[type] ?? [];
                                     const isGood = type === 'best';
@@ -527,6 +528,8 @@ export default function Analytics() {
                     </>
                 )}
             </main>
+
+            <MobileBottomNav />
         </div>
     );
 }

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import api from '../services/api';
 import NotificationBell from '../components/common/NotificationBell';
+import MobileBottomNav from '../components/layout/MobileBottomNav';
 
 const SOCKET_URL = import.meta.env.VITE_API_URL
     ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '')
@@ -295,7 +296,7 @@ const Markets = () => {
                 </div>
 
                 {/* Category tabs */}
-                <div className="max-w-[1440px] mx-auto px-4 md:px-6 flex gap-1 pb-2 overflow-x-auto">
+                <div className="max-w-[1440px] mx-auto px-4 md:px-6 flex gap-1 pb-2 overflow-x-auto no-scrollbar">
                     {TABS.map(t => (
                         <button
                             key={t.key}
@@ -313,7 +314,7 @@ const Markets = () => {
             </div>
 
             {/* ── Content ── */}
-            <div className="max-w-[1440px] mx-auto px-4 md:px-6 py-4">
+            <div className="max-w-[1440px] mx-auto px-4 md:px-6 py-2 md:py-4 pb-24 md:pb-4">
                 {loading ? (
                     <SkeletonTable />
                 ) : coins.length === 0 ? (
@@ -343,6 +344,8 @@ const Markets = () => {
                     />
                 )}
             </div>
+
+            <MobileBottomNav />
         </div>
     );
 };
@@ -356,34 +359,34 @@ function TableView({ coins, sparklines, flashing, watchlist, toggleWatchlist, op
                 <table className="w-full text-sm">
                     <thead>
                         <tr className="border-b border-crypto-border">
-                            <th className="py-3 px-4 text-left text-xs font-semibold text-crypto-muted w-8">#</th>
-                            <th className="py-3 px-4 text-left text-xs font-semibold text-crypto-muted">
+                            <th className="py-2 md:py-3 px-3 md:px-4 text-left text-[10px] font-semibold text-crypto-muted hidden sm:table-cell w-8">#</th>
+                            <th className="py-2 md:py-3 px-3 md:px-4 text-left text-[10px] font-semibold text-crypto-muted">
                                 <button onClick={() => handleSort('symbol')} className="flex items-center cursor-pointer hover:text-crypto-heading transition-colors">
                                     Coin <SortIcon col="symbol" />
                                 </button>
                             </th>
-                            <th className="py-3 px-4 text-right text-xs font-semibold text-crypto-muted">
+                            <th className="py-2 md:py-3 px-3 md:px-4 text-right text-[10px] font-semibold text-crypto-muted">
                                 <button onClick={() => handleSort('price')} className="flex items-center ml-auto cursor-pointer hover:text-crypto-heading transition-colors">
                                     Price <SortIcon col="price" />
                                 </button>
                             </th>
-                            <th className="py-3 px-4 text-right text-xs font-semibold text-crypto-muted">
+                            <th className="py-2 md:py-3 px-3 md:px-4 text-right text-[10px] font-semibold text-crypto-muted">
                                 <button onClick={() => handleSort('change24h')} className="flex items-center ml-auto cursor-pointer hover:text-crypto-heading transition-colors">
                                     24h % <SortIcon col="change24h" />
                                 </button>
                             </th>
-                            <th className="py-3 px-4 text-right text-xs font-semibold text-crypto-muted hidden md:table-cell">
+                            <th className="py-2 md:py-3 px-3 md:px-4 text-right text-[10px] font-semibold text-crypto-muted hidden md:table-cell">
                                 <button onClick={() => handleSort('volume24h')} className="flex items-center ml-auto cursor-pointer hover:text-crypto-heading transition-colors">
                                     Volume <SortIcon col="volume24h" />
                                 </button>
                             </th>
-                            <th className="py-3 px-4 text-right text-xs font-semibold text-crypto-muted hidden lg:table-cell">
+                            <th className="py-2 md:py-3 px-3 md:px-4 text-right text-[10px] font-semibold text-crypto-muted hidden lg:table-cell">
                                 24h Range
                             </th>
-                            <th className="py-3 px-4 text-right text-xs font-semibold text-crypto-muted hidden sm:table-cell">
-                                Sparkline
+                            <th className="py-2 md:py-3 px-3 md:px-4 text-right text-[10px] font-semibold text-crypto-muted hidden sm:table-cell">
+                                7d
                             </th>
-                            <th className="py-3 px-4 w-10" />
+                            <th className="py-2 md:py-3 px-2 md:px-4 w-8 md:w-10" />
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-crypto-border/50">
@@ -400,27 +403,27 @@ function TableView({ coins, sparklines, flashing, watchlist, toggleWatchlist, op
                                     }`}
                                     onClick={() => openChart(coin.symbol)}
                                 >
-                                    <td className="py-3 px-4 text-xs text-crypto-muted">{i + 1}</td>
+                                    <td className="py-2 md:py-3 px-3 md:px-4 text-xs text-crypto-muted hidden sm:table-cell">{i + 1}</td>
 
                                     {/* Coin identity */}
-                                    <td className="py-3 px-4">
-                                        <div className="flex items-center gap-3">
+                                    <td className="py-2 md:py-3 px-3 md:px-4">
+                                        <div className="flex items-center gap-2 md:gap-3">
                                             <div
-                                                className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                                                className="w-7 h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center text-white text-[10px] md:text-xs font-bold flex-shrink-0"
                                                 style={{ background: coinColor(coin.symbol) }}
                                             >
                                                 {getCoinInitials(coin.symbol)}
                                             </div>
-                                            <div>
-                                                <div className="font-semibold text-crypto-heading text-sm">{coin.displayName || coin.symbol}</div>
-                                                <div className="text-xs text-crypto-muted">{coin.symbol}</div>
+                                            <div className="min-w-0">
+                                                <div className="font-semibold text-crypto-heading text-xs md:text-sm truncate">{coin.displayName || coin.symbol.replace('USD','')}</div>
+                                                <div className="text-[10px] text-crypto-muted hidden sm:block">{coin.symbol}</div>
                                             </div>
                                         </div>
                                     </td>
 
                                     {/* Price */}
-                                    <td className="py-3 px-4 text-right">
-                                        <span className={`font-bold tabular-nums transition-colors ${
+                                    <td className="py-2 md:py-3 px-3 md:px-4 text-right">
+                                        <span className={`font-bold tabular-nums text-xs md:text-sm transition-colors ${
                                             flash === 'up' ? 'text-crypto-success' :
                                             flash === 'down' ? 'text-crypto-danger' : 'text-crypto-heading'
                                         }`}>
@@ -429,9 +432,9 @@ function TableView({ coins, sparklines, flashing, watchlist, toggleWatchlist, op
                                     </td>
 
                                     {/* 24h change */}
-                                    <td className="py-3 px-4 text-right">
+                                    <td className="py-2 md:py-3 px-3 md:px-4 text-right">
                                         {coin.change24h !== null ? (
-                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold tabular-nums ${
+                                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] md:text-xs font-semibold tabular-nums ${
                                                 isUp ? 'bg-crypto-success/10 text-crypto-success' : 'bg-crypto-danger/10 text-crypto-danger'
                                             }`}>
                                                 {isUp ? '▲' : '▼'} {Math.abs(coin.change24h).toFixed(2)}%
@@ -440,12 +443,12 @@ function TableView({ coins, sparklines, flashing, watchlist, toggleWatchlist, op
                                     </td>
 
                                     {/* Volume */}
-                                    <td className="py-3 px-4 text-right text-crypto-muted tabular-nums hidden md:table-cell">
+                                    <td className="py-2 md:py-3 px-3 md:px-4 text-right text-crypto-muted tabular-nums text-xs hidden md:table-cell">
                                         {fmtVolume(coin.volume24h)}
                                     </td>
 
                                     {/* 24h range */}
-                                    <td className="py-3 px-4 hidden lg:table-cell">
+                                    <td className="py-2 md:py-3 px-3 md:px-4 hidden lg:table-cell">
                                         {coin.price && coin.low24h && coin.high24h ? (
                                             <div className="flex flex-col items-end gap-1">
                                                 <div className="relative w-20 h-1.5 bg-crypto-border rounded-full overflow-hidden">
@@ -464,16 +467,16 @@ function TableView({ coins, sparklines, flashing, watchlist, toggleWatchlist, op
                                     </td>
 
                                     {/* Sparkline */}
-                                    <td className="py-3 px-4 hidden sm:table-cell" onClick={e => e.stopPropagation()}>
+                                    <td className="py-2 md:py-3 px-3 md:px-4 hidden sm:table-cell" onClick={e => e.stopPropagation()}>
                                         <Sparkline data={sparklines[coin.symbol] || []} isUp={isUp} />
                                     </td>
 
                                     {/* Star / Watchlist */}
-                                    <td className="py-3 px-4" onClick={e => { e.stopPropagation(); toggleWatchlist(coin.symbol); }}>
-                                        <button className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                                    <td className="py-2 md:py-3 px-2 md:px-4" onClick={e => { e.stopPropagation(); toggleWatchlist(coin.symbol); }}>
+                                        <button className={`p-1 rounded-lg transition-colors cursor-pointer ${
                                             isWatched ? 'text-yellow-400' : 'text-crypto-muted opacity-0 group-hover:opacity-100 hover:text-yellow-400'
                                         }`} title={isWatched ? 'Remove from watchlist' : 'Add to watchlist'}>
-                                            <svg className="w-4 h-4" fill={isWatched ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                                            <svg className="w-3.5 h-3.5" fill={isWatched ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
                                                 <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
                                             </svg>
                                         </button>
@@ -492,7 +495,7 @@ function TableView({ coins, sparklines, flashing, watchlist, toggleWatchlist, op
 
 function GridView({ coins, sparklines, flashing, watchlist, toggleWatchlist, openChart }) {
     return (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5 md:gap-4">
             {coins.map((coin) => {
                 const isUp = (coin.change24h ?? 0) >= 0;
                 const flash = flashing[coin.symbol];
@@ -502,38 +505,38 @@ function GridView({ coins, sparklines, flashing, watchlist, toggleWatchlist, ope
                     <div
                         key={coin.symbol}
                         onClick={() => openChart(coin.symbol)}
-                        className={`bg-crypto-card border border-crypto-border rounded-xl p-4 cursor-pointer hover:border-crypto-primary/40 hover:shadow-lg transition-all duration-200 group relative ${
+                        className={`bg-crypto-card border border-crypto-border rounded-xl p-3 md:p-4 cursor-pointer hover:border-crypto-primary/40 hover:shadow-lg transition-all duration-200 group relative ${
                             flash === 'up' ? 'border-crypto-success/30' : flash === 'down' ? 'border-crypto-danger/30' : ''
                         }`}
                     >
                         {/* Star */}
                         <button
                             onClick={e => { e.stopPropagation(); toggleWatchlist(coin.symbol); }}
-                            className={`absolute top-3 right-3 p-1 rounded cursor-pointer transition-colors ${
+                            className={`absolute top-2.5 right-2.5 p-0.5 rounded cursor-pointer transition-colors ${
                                 isWatched ? 'text-yellow-400' : 'text-crypto-muted opacity-0 group-hover:opacity-100 hover:text-yellow-400'
                             }`}
                         >
-                            <svg className="w-3.5 h-3.5" fill={isWatched ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                            <svg className="w-3 h-3 md:w-3.5 md:h-3.5" fill={isWatched ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
                                 <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
                             </svg>
                         </button>
 
                         {/* Header */}
-                        <div className="flex items-center gap-2.5 mb-3">
+                        <div className="flex items-center gap-1.5 md:gap-2.5 mb-2 md:mb-3">
                             <div
-                                className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold"
+                                className="w-7 h-7 md:w-9 md:h-9 rounded-full flex items-center justify-center text-white text-[10px] md:text-xs font-bold flex-shrink-0"
                                 style={{ background: coinColor(coin.symbol) }}
                             >
                                 {getCoinInitials(coin.symbol)}
                             </div>
-                            <div>
-                                <div className="font-semibold text-crypto-heading text-sm">{coin.displayName}</div>
-                                <div className="text-xs text-crypto-muted">{coin.symbol}</div>
+                            <div className="min-w-0">
+                                <div className="font-semibold text-crypto-heading text-xs md:text-sm truncate">{coin.displayName || coin.symbol.replace('USD','')}</div>
+                                <div className="text-[10px] md:text-xs text-crypto-muted truncate">{coin.symbol}</div>
                             </div>
                         </div>
 
                         {/* Price */}
-                        <div className={`text-xl font-bold tabular-nums mb-1 transition-colors ${
+                        <div className={`text-base md:text-xl font-bold tabular-nums mb-1 transition-colors ${
                             flash === 'up' ? 'text-crypto-success' :
                             flash === 'down' ? 'text-crypto-danger' : 'text-crypto-heading'
                         }`}>
@@ -542,7 +545,7 @@ function GridView({ coins, sparklines, flashing, watchlist, toggleWatchlist, ope
 
                         {/* Change badge */}
                         {coin.change24h !== null && (
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold mb-3 tabular-nums ${
+                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] md:text-xs font-semibold mb-2 md:mb-3 tabular-nums ${
                                 isUp ? 'bg-crypto-success/10 text-crypto-success' : 'bg-crypto-danger/10 text-crypto-danger'
                             }`}>
                                 {isUp ? '▲' : '▼'} {Math.abs(coin.change24h).toFixed(2)}%
@@ -555,13 +558,13 @@ function GridView({ coins, sparklines, flashing, watchlist, toggleWatchlist, ope
                         </div>
 
                         {/* Volume */}
-                        <div className="text-xs text-crypto-muted mt-2">
+                        <div className="text-[10px] md:text-xs text-crypto-muted mt-1.5 md:mt-2">
                             Vol: {fmtVolume(coin.volume24h)}
                         </div>
 
                         {/* Hover overlay */}
                         <div className="absolute inset-0 rounded-xl bg-crypto-primary/5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <span className="text-xs font-semibold text-crypto-primary bg-crypto-card/90 px-3 py-1.5 rounded-lg border border-crypto-primary/20">
+                            <span className="text-[10px] md:text-xs font-semibold text-crypto-primary bg-crypto-card/90 px-2 py-1 md:px-3 md:py-1.5 rounded-lg border border-crypto-primary/20">
                                 View Chart →
                             </span>
                         </div>

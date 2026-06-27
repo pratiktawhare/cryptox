@@ -53,11 +53,11 @@ const PortfolioSummary = () => {
     // ── Loading skeleton ──────────────────────────────────────────────────────
     if (loading) {
         return (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
                 {[1, 2, 3].map(i => (
-                    <div key={i} className="bg-crypto-card border border-crypto-border rounded-xl p-6">
-                        <div className="h-3 w-20 bg-crypto-border rounded animate-pulse mb-3" />
-                        <div className="h-8 w-28 bg-crypto-border rounded animate-pulse" />
+                    <div key={i} className="bg-crypto-card border border-crypto-border rounded-xl p-3 md:p-5">
+                        <div className="h-2.5 w-16 bg-crypto-border rounded animate-pulse mb-2.5" />
+                        <div className="h-6 w-20 bg-crypto-border rounded animate-pulse" />
                     </div>
                 ))}
             </div>
@@ -98,29 +98,29 @@ const PortfolioSummary = () => {
         ];
 
         return (
-            <div className="space-y-5 animate-fade-in">
+            <div className="space-y-3 md:space-y-5 animate-fade-in">
                 {/* Paper mode banner */}
-                <div className="flex items-center gap-2 bg-crypto-primary/8 border border-crypto-primary/20 rounded-xl px-4 py-2.5 text-xs text-crypto-primary">
-                    <span className="text-base">📄</span>
-                    <span><strong>Paper Trading Mode</strong> — All trades are simulated with virtual $10,000. No real money at risk.</span>
+                <div className="flex items-center gap-2 bg-crypto-primary/8 border border-crypto-primary/20 rounded-xl px-3 py-2 text-xs text-crypto-primary">
+                    <span>📄</span>
+                    <span className="leading-snug"><strong>Paper Mode</strong> — Simulated trades, no real money.</span>
                     <button
                         onClick={() => navigate('/positions')}
-                        className="ml-auto text-crypto-primary/80 hover:text-crypto-primary underline underline-offset-2 cursor-pointer shrink-0"
+                        className="ml-auto text-crypto-primary/80 hover:text-crypto-primary underline underline-offset-2 cursor-pointer shrink-0 whitespace-nowrap"
                     >
-                        View positions →
+                        Positions →
                     </button>
                 </div>
 
                 {/* Stat cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
                     {statCards.map(card => (
-                        <div key={card.label} className="bg-crypto-card border border-crypto-border rounded-xl p-5 hover:border-crypto-primary/20 transition-colors">
+                        <div key={card.label} className="bg-crypto-card border border-crypto-border rounded-xl p-3 md:p-5 hover:border-crypto-primary/20 transition-colors">
                             <div className="flex items-center justify-between mb-1">
-                                <span className="text-xs font-medium text-crypto-muted uppercase tracking-wider">{card.label}</span>
-                                <span className="text-lg">{card.icon}</span>
+                                <span className="text-[10px] md:text-xs font-medium text-crypto-muted uppercase tracking-wider">{card.label}</span>
+                                <span className="text-sm md:text-lg">{card.icon}</span>
                             </div>
-                            <p className={`text-2xl font-bold tabular-nums ${card.color}`}>{card.value}</p>
-                            <p className="text-[11px] text-crypto-muted mt-1">{card.sub}</p>
+                            <p className={`text-lg md:text-2xl font-bold tabular-nums ${card.color}`}>{card.value}</p>
+                            <p className="text-[10px] text-crypto-muted mt-1 leading-snug">{card.sub}</p>
                         </div>
                     ))}
                 </div>
@@ -128,19 +128,18 @@ const PortfolioSummary = () => {
                 {/* Open paper positions */}
                 {paperPositions.length > 0 && (
                     <div className="bg-crypto-card border border-crypto-border rounded-xl overflow-hidden">
-                        <div className="px-5 py-4 border-b border-crypto-border flex items-center justify-between">
-                            <h3 className="text-sm font-semibold text-crypto-heading">Open Paper Positions ({paperPositions.length})</h3>
+                        <div className="px-4 py-3 border-b border-crypto-border flex items-center justify-between">
+                            <h3 className="text-sm font-semibold text-crypto-heading">Open Positions ({paperPositions.length})</h3>
                         </div>
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
-                                    <tr className="text-xs text-crypto-muted uppercase tracking-wider">
-                                        <th className="text-left px-5 py-3 font-medium">Symbol</th>
-                                        <th className="text-right px-5 py-3 font-medium">Side</th>
-                                        <th className="text-right px-5 py-3 font-medium">Size</th>
-                                        <th className="text-right px-5 py-3 font-medium">Entry</th>
-                                        <th className="text-right px-5 py-3 font-medium">Unrealised PnL</th>
-                                        <th className="text-right px-5 py-3 font-medium">ROE</th>
+                                    <tr className="text-[10px] text-crypto-muted uppercase tracking-wider">
+                                        <th className="text-left px-3 md:px-5 py-2 md:py-3 font-medium">Symbol</th>
+                                        <th className="text-right px-3 md:px-5 py-2 md:py-3 font-medium">Side</th>
+                                        <th className="text-right px-3 md:px-5 py-2 md:py-3 font-medium hidden sm:table-cell">Entry</th>
+                                        <th className="text-right px-3 md:px-5 py-2 md:py-3 font-medium">PnL</th>
+                                        <th className="text-right px-3 md:px-5 py-2 md:py-3 font-medium hidden sm:table-cell">ROE</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-crypto-border/50">
@@ -149,16 +148,15 @@ const PortfolioSummary = () => {
                                         const roe = parseFloat(p.roe || 0);
                                         return (
                                             <tr key={p._id} className="hover:bg-crypto-card-hover transition-colors">
-                                                <td className="px-5 py-3 font-semibold text-crypto-heading">{p.symbol}</td>
-                                                <td className={`px-5 py-3 text-right font-bold ${p.side === 'buy' ? 'text-emerald-400' : 'text-red-400'}`}>
-                                                    {p.side === 'buy' ? '▲ Long' : '▼ Short'}
+                                                <td className="px-3 md:px-5 py-2 md:py-3 font-semibold text-crypto-heading text-xs md:text-sm">{p.symbol.replace('USD','')}</td>
+                                                <td className={`px-3 md:px-5 py-2 md:py-3 text-right font-bold text-xs ${p.side === 'buy' ? 'text-emerald-400' : 'text-red-400'}`}>
+                                                    {p.side === 'buy' ? '▲' : '▼'} <span className="hidden sm:inline">{p.side === 'buy' ? 'Long' : 'Short'}</span>
                                                 </td>
-                                                <td className="px-5 py-3 text-right tabular-nums text-crypto-heading">{p.size}</td>
-                                                <td className="px-5 py-3 text-right tabular-nums">${parseFloat(p.entryPrice).toFixed(2)}</td>
-                                                <td className={`px-5 py-3 text-right font-semibold tabular-nums ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                                <td className="px-3 md:px-5 py-2 md:py-3 text-right tabular-nums text-xs hidden sm:table-cell">${parseFloat(p.entryPrice).toFixed(2)}</td>
+                                                <td className={`px-3 md:px-5 py-2 md:py-3 text-right font-semibold tabular-nums text-xs md:text-sm ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                                                     {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
                                                 </td>
-                                                <td className={`px-5 py-3 text-right font-semibold tabular-nums ${roe >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                                <td className={`px-3 md:px-5 py-2 md:py-3 text-right font-semibold tabular-nums text-xs hidden sm:table-cell ${roe >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                                                     {roe >= 0 ? '+' : ''}{roe.toFixed(1)}%
                                                 </td>
                                             </tr>
@@ -172,8 +170,8 @@ const PortfolioSummary = () => {
 
                 {/* Empty state */}
                 {paperPositions.length === 0 && (
-                    <div className="bg-crypto-card border border-crypto-border rounded-xl p-10 text-center">
-                        <div className="text-4xl mb-3">📄</div>
+                    <div className="bg-crypto-card border border-crypto-border rounded-xl p-6 md:p-10 text-center">
+                        <div className="text-3xl mb-2">📄</div>
                         <h3 className="text-sm font-semibold text-crypto-heading mb-1">No open paper positions</h3>
                         <p className="text-xs text-crypto-muted">Go to AI Signals and hit Execute to place a simulated trade.</p>
                     </div>
@@ -185,8 +183,8 @@ const PortfolioSummary = () => {
     // ── Live mode ─────────────────────────────────────────────────────────────
     if (noKey) {
         return (
-            <div className="bg-crypto-card border border-crypto-border rounded-xl p-10 text-center animate-fade-in">
-                <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-crypto-primary/10 mb-4">
+            <div className="bg-crypto-card border border-crypto-border rounded-xl p-6 md:p-10 text-center animate-fade-in">
+                <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-crypto-primary/10 mb-3">
                     <svg className="w-7 h-7 text-crypto-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
                     </svg>
@@ -245,33 +243,33 @@ const PortfolioSummary = () => {
     ];
 
     return (
-        <div className="space-y-5 animate-fade-in">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="space-y-3 md:space-y-5 animate-fade-in">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
                 {statCards.map(card => (
-                    <div key={card.label} className="bg-crypto-card border border-crypto-border rounded-xl p-5 hover:border-crypto-primary/20 transition-colors">
+                    <div key={card.label} className="bg-crypto-card border border-crypto-border rounded-xl p-3 md:p-5 hover:border-crypto-primary/20 transition-colors">
                         <div className="flex items-center justify-between mb-1">
-                            <span className="text-xs font-medium text-crypto-muted uppercase tracking-wider">{card.label}</span>
-                            <span className="text-lg">{card.icon}</span>
+                            <span className="text-[10px] md:text-xs font-medium text-crypto-muted uppercase tracking-wider">{card.label}</span>
+                            <span className="text-sm md:text-lg">{card.icon}</span>
                         </div>
-                        <p className={`text-2xl font-bold tabular-nums ${card.color}`}>{card.value}</p>
-                        <p className="text-[11px] text-crypto-muted mt-1">{card.sub}</p>
+                        <p className={`text-lg md:text-2xl font-bold tabular-nums ${card.color}`}>{card.value}</p>
+                        <p className="text-[10px] text-crypto-muted mt-1">{card.sub}</p>
                     </div>
                 ))}
             </div>
 
             {positions.length > 0 && (
                 <div className="bg-crypto-card border border-crypto-border rounded-xl overflow-hidden">
-                    <div className="px-5 py-4 border-b border-crypto-border">
+                    <div className="px-4 py-3 border-b border-crypto-border">
                         <h3 className="text-sm font-semibold text-crypto-heading">Open Positions</h3>
                     </div>
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead>
-                                <tr className="text-xs text-crypto-muted uppercase tracking-wider">
-                                    <th className="text-left px-5 py-3 font-medium">Symbol</th>
-                                    <th className="text-right px-5 py-3 font-medium">Size</th>
-                                    <th className="text-right px-5 py-3 font-medium">Entry</th>
-                                    <th className="text-right px-5 py-3 font-medium">Unrealized PnL</th>
+                                <tr className="text-[10px] text-crypto-muted uppercase tracking-wider">
+                                    <th className="text-left px-3 md:px-5 py-2 md:py-3 font-medium">Symbol</th>
+                                    <th className="text-right px-3 md:px-5 py-2 md:py-3 font-medium hidden sm:table-cell">Size</th>
+                                    <th className="text-right px-3 md:px-5 py-2 md:py-3 font-medium hidden sm:table-cell">Entry</th>
+                                    <th className="text-right px-3 md:px-5 py-2 md:py-3 font-medium">PnL</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-crypto-border/50">
@@ -279,10 +277,10 @@ const PortfolioSummary = () => {
                                     const pnl = parseFloat(p.unrealized_pnl);
                                     return (
                                         <tr key={p.id} className="hover:bg-crypto-card-hover transition-colors">
-                                            <td className="px-5 py-3 font-semibold text-crypto-heading">{p.product_symbol}</td>
-                                            <td className="px-5 py-3 text-right tabular-nums">{p.size}</td>
-                                            <td className="px-5 py-3 text-right tabular-nums">${parseFloat(p.entry_price).toFixed(2)}</td>
-                                            <td className={`px-5 py-3 text-right font-semibold tabular-nums ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                            <td className="px-3 md:px-5 py-2 md:py-3 font-semibold text-crypto-heading text-xs md:text-sm">{p.product_symbol}</td>
+                                            <td className="px-3 md:px-5 py-2 md:py-3 text-right tabular-nums text-xs hidden sm:table-cell">{p.size}</td>
+                                            <td className="px-3 md:px-5 py-2 md:py-3 text-right tabular-nums text-xs hidden sm:table-cell">${parseFloat(p.entry_price).toFixed(2)}</td>
+                                            <td className={`px-3 md:px-5 py-2 md:py-3 text-right font-semibold tabular-nums text-xs md:text-sm ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                                                 {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
                                             </td>
                                         </tr>

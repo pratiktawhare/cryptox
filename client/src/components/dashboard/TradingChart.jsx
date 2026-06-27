@@ -139,36 +139,36 @@ const TradingChart = ({ symbol, socket, isDarkMode, onNewOrder }) => {
     return (
         <div className="bg-crypto-card border border-crypto-border rounded-xl overflow-hidden flex flex-col animate-fade-in">
             {/* Header */}
-            <div className="px-5 py-3 border-b border-crypto-border flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                    <h3 className="text-sm font-semibold text-crypto-heading">{symbol}</h3>
+            <div className="px-4 py-2.5 border-b border-crypto-border flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                    <h3 className="text-sm font-semibold text-crypto-heading truncate">{symbol}</h3>
                     {onNewOrder && (
                         <button
                             onClick={() => onNewOrder(symbol)}
-                            className="px-2.5 py-1 bg-crypto-primary hover:bg-crypto-primary/95 text-white rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+                            className="px-2 py-1 bg-crypto-primary hover:bg-crypto-primary/95 text-white rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-sm flex-shrink-0"
                         >
                             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                             </svg>
-                            New Order
+                            Order
                         </button>
                     )}
                     {loading && (
-                        <div className="flex items-center gap-1.5 text-xs text-crypto-primary">
+                        <div className="flex items-center gap-1 text-[10px] text-crypto-primary flex-shrink-0">
                             <div className="w-1.5 h-1.5 rounded-full bg-crypto-primary animate-live-dot" />
-                            Loading…
+                            Live
                         </div>
                     )}
-                    {error && <span className="text-xs text-crypto-danger">{error}</span>}
+                    {error && <span className="text-[10px] text-crypto-danger truncate">{error}</span>}
                 </div>
 
                 {/* Timeframe pills */}
-                <div className="flex gap-1 bg-crypto-bg-subtle rounded-lg p-0.5">
+                <div className="flex gap-0.5 bg-crypto-bg-subtle rounded-lg p-0.5 flex-shrink-0">
                     {TIMEFRAMES.map((tf) => (
                         <button
                             key={tf}
                             onClick={() => setResolution(tf)}
-                            className={`px-3 py-1 rounded-md text-xs font-semibold transition-all duration-200 cursor-pointer ${
+                            className={`px-2 py-0.5 md:px-3 md:py-1 rounded-md text-[10px] md:text-xs font-semibold transition-all duration-200 cursor-pointer ${
                                 resolution === tf
                                     ? 'bg-crypto-primary text-white shadow-sm'
                                     : 'text-crypto-muted hover:text-crypto-heading'
@@ -181,7 +181,7 @@ const TradingChart = ({ symbol, socket, isDarkMode, onNewOrder }) => {
             </div>
 
             {/* Chart canvas */}
-            <div className="relative h-[420px]">
+            <div className="relative h-[260px] md:h-[420px]">
                 <div ref={containerRef} className="absolute inset-0" />
                 {loading && (
                     <div className="absolute inset-0 flex items-center justify-center bg-crypto-card/50 backdrop-blur-sm z-10">

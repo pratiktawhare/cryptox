@@ -4,6 +4,7 @@ import { io } from 'socket.io-client';
 import api from '../services/api';
 import TradeConfirmDialog from '../components/trading/TradeConfirmDialog';
 import NotificationBell from '../components/common/NotificationBell';
+import MobileBottomNav from '../components/layout/MobileBottomNav';
 
 const SOCKET_URL = import.meta.env.VITE_API_URL
     ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '')
@@ -56,42 +57,42 @@ function SignalCard({ signal, onTrade }) {
             <div className={`h-0.5 w-full ${isBuy ? 'bg-gradient-to-r from-emerald-500/50 to-emerald-400' : 'bg-gradient-to-r from-red-500/50 to-red-400'}`} />
 
             {/* Main content */}
-            <div className="p-4">
-                <div className="flex items-start justify-between gap-3">
+            <div className="p-3 md:p-4">
+                <div className="flex items-start justify-between gap-2 md:gap-3">
                     {/* Left: symbol + action */}
-                    <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold border ${style.bg} ${style.border}`}>
+                    <div className="flex items-center gap-2 md:gap-3">
+                        <div className={`w-8 h-8 md:w-10 md:h-10 rounded-xl flex items-center justify-center text-xs md:text-sm font-bold border flex-shrink-0 ${style.bg} ${style.border}`}>
                             <span className={style.text}>{isBuy ? '▲' : '▼'}</span>
                         </div>
                         <div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-sm font-bold text-crypto-heading">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-xs md:text-sm font-bold text-crypto-heading">
                                     {signal.symbol.replace('USD', '/USD')}
                                 </span>
-                                <span className={`text-xs font-semibold px-2 py-0.5 rounded-md ${style.bg} ${style.text} border ${style.border}`}>
+                                <span className={`text-[10px] md:text-xs font-semibold px-1.5 py-0.5 rounded-md ${style.bg} ${style.text} border ${style.border}`}>
                                     {signal.action}
                                 </span>
-                                <span className="text-xs text-crypto-muted bg-crypto-bg-subtle px-1.5 py-0.5 rounded">
+                                <span className="text-[10px] md:text-xs text-crypto-muted bg-crypto-bg-subtle px-1.5 py-0.5 rounded">
                                     {signal.leverage}×
                                 </span>
                             </div>
-                            <div className="flex items-center gap-2 mt-0.5">
-                                <span className="text-xs text-crypto-muted">{signal.timeframe} · {signal.tradeType}</span>
+                            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                <span className="text-[10px] md:text-xs text-crypto-muted">{signal.timeframe} · {signal.tradeType}</span>
                                 {signal.avgVolumeUsdt > 0 && (
                                     <>
-                                        <span className="text-xs text-crypto-muted">·</span>
-                                        <span className="text-xs text-crypto-muted">Vol: ${signal.avgVolumeUsdt >= 1000 ? `${Math.round(signal.avgVolumeUsdt / 1000)}k` : signal.avgVolumeUsdt.toFixed(0)}</span>
+                                        <span className="text-[10px] text-crypto-muted">·</span>
+                                        <span className="text-[10px] md:text-xs text-crypto-muted">Vol: ${signal.avgVolumeUsdt >= 1000 ? `${Math.round(signal.avgVolumeUsdt / 1000)}k` : signal.avgVolumeUsdt.toFixed(0)}</span>
                                     </>
                                 )}
-                                <span className="text-xs text-crypto-muted">·</span>
-                                <span className="text-xs text-crypto-muted">{timeAgo(signal.createdAt)}</span>
+                                <span className="text-[10px] text-crypto-muted">·</span>
+                                <span className="text-[10px] md:text-xs text-crypto-muted">{timeAgo(signal.createdAt)}</span>
                             </div>
                         </div>
                     </div>
 
                     {/* Right: confidence ring */}
                     <div className="text-right flex-shrink-0">
-                        <div className={`text-lg font-bold tabular-nums ${conf.text}`}>
+                        <div className={`text-sm md:text-lg font-bold tabular-nums ${conf.text}`}>
                             {signal.confidence}%
                         </div>
                         <div className="text-[10px] text-crypto-muted">confidence</div>
@@ -99,14 +100,14 @@ function SignalCard({ signal, onTrade }) {
                 </div>
 
                 {/* Price levels */}
-                <div className="mt-3 grid grid-cols-4 gap-2">
+                <div className="mt-2.5 md:mt-3 grid grid-cols-4 gap-1.5 md:gap-2">
                     {[
                         { label: 'Entry', value: signal.entry, highlight: true },
                         { label: 'Stop', value: signal.stopLoss, bad: true },
                         { label: 'TP1', value: signal.target1, good: true },
                         { label: 'TP2', value: signal.target2, good: true },
                     ].map(({ label, value, highlight, good, bad }) => (
-                        <div key={label} className={`rounded-lg p-2 text-center ${
+                        <div key={label} className={`rounded-lg p-1.5 md:p-2 text-center ${
                             highlight ? 'bg-crypto-primary/10 border border-crypto-primary/20' :
                             good ? 'bg-emerald-500/8 border border-emerald-500/15' :
                             bad ? 'bg-red-500/8 border border-red-500/15' :
@@ -354,12 +355,13 @@ const Signals = () => {
                                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-live-dot" />
                                 <span className="text-xs text-emerald-400">Live</span>
                             </div>
-                            <p className="text-xs text-crypto-muted">Gemini AI · 195 coins · On-Demand Scan</p>
+                            <p className="text-xs text-crypto-muted hidden sm:block">Gemini AI · 195 coins · On-Demand Scan</p>
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-                        <div className="flex items-center gap-1 mr-1">
+                    <div className="flex items-center gap-2">
+                        {/* Quick coin buttons — hidden on mobile, shown in row below */}
+                        <div className="hidden sm:flex items-center gap-1 mr-1">
                             {['BTCUSD', 'ETHUSD', 'SOLUSD', 'XRPUSD', 'DOGEUSD'].map(sym => (
                                 <button
                                     key={sym}
@@ -373,10 +375,10 @@ const Signals = () => {
                         </div>
                         <input
                             type="text"
-                            placeholder="Filter coin…"
+                            placeholder="Coin…"
                             value={search}
                             onChange={e => setSearch(e.target.value)}
-                            className="text-xs px-3 py-1.5 rounded-lg bg-crypto-input border border-crypto-border text-crypto-heading placeholder-crypto-muted focus:outline-none focus:ring-1 focus:ring-crypto-primary/30 focus:border-crypto-primary transition-all w-24 sm:w-32"
+                            className="text-xs px-3 py-1.5 rounded-lg bg-crypto-input border border-crypto-border text-crypto-heading placeholder-crypto-muted focus:outline-none focus:ring-1 focus:ring-crypto-primary/30 focus:border-crypto-primary transition-all w-20 sm:w-32"
                         />
                         <button
                             onClick={() => handleAnalyzeNow(search || 'RANDOM')}
@@ -397,33 +399,48 @@ const Signals = () => {
                     </div>
                 </div>
 
-                {/* Stats bar */}
-                <div className="max-w-[1440px] mx-auto px-4 md:px-6 pb-2 flex items-center gap-6">
-                    <div className="flex items-center gap-1.5 text-xs">
-                        <div className="w-2 h-2 rounded-full bg-emerald-400" />
-                        <span className="text-emerald-400 font-semibold">{buyCount} BUY</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-xs">
-                        <div className="w-2 h-2 rounded-full bg-red-400" />
-                        <span className="text-red-400 font-semibold">{sellCount} SELL</span>
-                    </div>
-                    <div className="text-xs text-crypto-muted">
-                        Avg confidence: <span className="text-crypto-heading font-semibold">{avgConf}%</span>
-                    </div>
+                {/* Mobile quick-coin row */}
+                <div className="sm:hidden px-4 pb-2 flex gap-1.5 overflow-x-auto no-scrollbar">
+                    {['BTCUSD', 'ETHUSD', 'SOLUSD', 'XRPUSD', 'DOGEUSD'].map(sym => (
+                        <button
+                            key={sym}
+                            onClick={() => handleAnalyzeNow(sym)}
+                            disabled={scanning}
+                            className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-crypto-bg-subtle border border-crypto-border text-xs font-bold text-crypto-muted hover:text-crypto-primary hover:border-crypto-primary/30 transition-all cursor-pointer disabled:opacity-50"
+                        >
+                            {sym.replace('USD', '')}
+                        </button>
+                    ))}
+                </div>
 
-                    <button
-                        onClick={handleClearClosed}
-                        className="px-2.5 py-1 text-xs font-semibold text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg hover:bg-red-500/20 transition-all cursor-pointer flex items-center gap-1"
-                    >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                        Clear Closed
-                    </button>
+                {/* Stats + Filter bar — two logical rows, no horizontal scroll */}
+                <div className="max-w-[1440px] mx-auto px-4 md:px-6 pb-2 space-y-1.5">
+                    {/* Row 1: Stats + action filter */}
+                    <div className="flex items-center gap-2 sm:gap-4 flex-wrap">
+                        <div className="flex items-center gap-1.5 text-xs">
+                            <div className="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0" />
+                            <span className="text-emerald-400 font-semibold">{buyCount} BUY</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-xs">
+                            <div className="w-2 h-2 rounded-full bg-red-400 flex-shrink-0" />
+                            <span className="text-red-400 font-semibold">{sellCount} SELL</span>
+                        </div>
+                        <div className="text-xs text-crypto-muted hidden sm:block">
+                            Avg: <span className="text-crypto-heading font-semibold">{avgConf}%</span>
+                        </div>
 
-                    <div className="ml-auto flex gap-3 items-center">
-                        {/* Action Filter */}
-                        <div className="flex gap-1">
+                        <button
+                            onClick={handleClearClosed}
+                            className="px-2 py-1 text-xs font-semibold text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg hover:bg-red-500/20 transition-all cursor-pointer flex items-center gap-1"
+                        >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            <span className="hidden xs:inline">Clear</span>
+                        </button>
+
+                        {/* Action filter — always visible */}
+                        <div className="ml-auto flex gap-1 flex-shrink-0">
                             {['all', 'BUY', 'SELL'].map(f => (
                                 <button
                                     key={f}
@@ -440,11 +457,28 @@ const Signals = () => {
                                 </button>
                             ))}
                         </div>
+                    </div>
 
-                        <div className="h-4 w-px bg-crypto-border hidden sm:block" />
+                    {/* Row 2: Confidence filter — select on mobile, buttons on sm+ */}
+                    <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-crypto-muted font-medium uppercase tracking-wide flex-shrink-0">Confidence</span>
 
-                        {/* Confidence Filter */}
-                        <div className="flex gap-1 flex-wrap justify-end">
+                        {/* Mobile: styled select */}
+                        <select
+                            value={confFilter}
+                            onChange={e => setConfFilter(e.target.value)}
+                            className="sm:hidden text-xs rounded-lg bg-crypto-input border border-crypto-border text-crypto-heading focus:outline-none focus:ring-1 focus:ring-crypto-primary/30 focus:border-crypto-primary transition-all px-2 py-1 cursor-pointer flex-1 max-w-[140px]"
+                        >
+                            <option value="all">All</option>
+                            <option value="50-60">50–60%</option>
+                            <option value="60-70">60–70%</option>
+                            <option value="70-80">70–80%</option>
+                            <option value="80-90">80–90%</option>
+                            <option value="90-100">90–100%</option>
+                        </select>
+
+                        {/* Desktop: button group */}
+                        <div className="hidden sm:flex gap-1 flex-wrap">
                             {[
                                 { key: 'all', label: 'All' },
                                 { key: '50-60', label: '50-60%' },
@@ -456,7 +490,7 @@ const Signals = () => {
                                 <button
                                     key={c.key}
                                     onClick={() => setConfFilter(c.key)}
-                                    className={`px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg text-[10px] sm:text-xs font-medium transition-all cursor-pointer ${
+                                    className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
                                         confFilter === c.key
                                             ? 'bg-crypto-primary/10 text-crypto-primary border border-crypto-primary/20'
                                             : 'text-crypto-muted hover:text-crypto-heading hover:bg-crypto-bg-subtle border border-transparent'
@@ -471,7 +505,7 @@ const Signals = () => {
             </div>
 
             {/* Content */}
-            <div className="max-w-[1440px] mx-auto px-4 md:px-6 py-4">
+            <div className="max-w-[1440px] mx-auto px-4 md:px-6 py-3 md:py-4 pb-24 md:pb-4">
                 {scanResult && (
                     <div className={`mb-6 p-5 rounded-2xl border backdrop-blur-lg animate-fade-in relative ${
                         scanResult.action === 'NO_TRADE'
@@ -618,6 +652,8 @@ const Signals = () => {
                     navigate('/positions');
                 }}
             />
+
+            <MobileBottomNav />
         </div>
     );
 };

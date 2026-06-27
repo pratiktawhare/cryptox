@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import ThemeToggle from '../components/layout/ThemeToggle';
 import TradingModeToggle from '../components/layout/TradingModeToggle';
+import MobileBottomNav from '../components/layout/MobileBottomNav';
 import NotificationBell from '../components/common/NotificationBell';
 import PortfolioSummary from '../components/dashboard/PortfolioSummary';
 import TradingChart from '../components/dashboard/TradingChart';
@@ -182,14 +183,14 @@ const Dashboard = () => {
                     </div>
 
                     {/* Right */}
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1.5 sm:gap-3">
                         {/* WebSocket status */}
                         <div className="hidden sm:flex items-center gap-1.5 text-xs text-crypto-muted">
                             <div className={`w-1.5 h-1.5 rounded-full ${wsConnected ? 'bg-crypto-success animate-live-dot' : 'bg-crypto-danger'}`} />
                             {wsConnected ? 'Live' : 'Offline'}
                         </div>
 
-                        <div className="h-5 w-px bg-crypto-border" />
+                        <div className="hidden sm:block h-5 w-px bg-crypto-border" />
 
                         {/* LIVE / PAPER toggle */}
                         <TradingModeToggle />
@@ -199,7 +200,7 @@ const Dashboard = () => {
                         {/* Notification Bell */}
                         <NotificationBell />
 
-                        <div className="h-5 w-px bg-crypto-border" />
+                        <div className="hidden sm:block h-5 w-px bg-crypto-border" />
 
                         <span className="text-xs text-crypto-muted hidden sm:block">
                             {user?.displayName || user?.username}
@@ -214,15 +215,19 @@ const Dashboard = () => {
                         </Button>
                     </div>
                 </div>
+            </header>
 
-                {/* Mobile nav */}
-                <div className="md:hidden flex border-t border-crypto-border">
+            {/* Mobile dashboard sub-tabs — sticky below the header */}
+            <div className="md:hidden sticky top-14 z-20 bg-crypto-card/95 backdrop-blur-lg border-b border-crypto-border">
+                <div className="flex overflow-x-auto no-scrollbar px-4 py-2 gap-1">
                     {NAV_ITEMS.map((item) => (
                         <button
                             key={item.key}
                             onClick={() => setActiveTab(item.key)}
-                            className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition-colors cursor-pointer ${
-                                activeTab === item.key ? 'text-crypto-primary' : 'text-crypto-muted'
+                            className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                                activeTab === item.key
+                                    ? 'bg-crypto-primary/10 text-crypto-primary'
+                                    : 'text-crypto-muted hover:text-crypto-heading'
                             }`}
                         >
                             {item.icon}
@@ -231,18 +236,18 @@ const Dashboard = () => {
                     ))}
                     <button
                         onClick={() => navigate('/markets')}
-                        className="flex-1 flex flex-col items-center gap-0.5 py-2 text-[10px] font-medium text-crypto-muted cursor-pointer"
+                        className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-crypto-muted cursor-pointer"
                     >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6" />
                         </svg>
-                        Markets
+                        All Markets
                     </button>
                 </div>
-            </header>
+            </div>
 
             {/* ── Content ── */}
-            <main className="max-w-[1440px] mx-auto px-4 md:px-6 py-6">
+            <main className="max-w-[1440px] mx-auto px-4 md:px-6 py-3 md:py-6 pb-24 md:pb-6">
                 {/* Portfolio tab */}
                 {activeTab === 'portfolio' && <PortfolioSummary />}
 
@@ -256,7 +261,7 @@ const Dashboard = () => {
 
                 {/* Market tab */}
                 {activeTab === 'market' && (
-                    <div className="space-y-5">
+                    <div className="space-y-3 md:space-y-5">
                         {/* Quick coin selector */}
                         <div className="flex gap-2 overflow-x-auto pb-1">
                             {tickers.slice(0, 8).map((t) => {
@@ -266,19 +271,19 @@ const Dashboard = () => {
                                     <button
                                         key={t.symbol}
                                         onClick={() => setSelectedSymbol(t.symbol)}
-                                        className={`flex-shrink-0 bg-crypto-card border rounded-xl px-3 py-2.5 text-left transition-all duration-200 cursor-pointer min-w-[110px] ${
+                                        className={`flex-shrink-0 bg-crypto-card border rounded-xl px-3 py-2 text-left transition-all duration-200 cursor-pointer min-w-[96px] md:min-w-[110px] ${
                                             isSelected
                                                 ? 'border-crypto-primary ring-1 ring-crypto-primary/20 shadow-md'
                                                 : 'border-crypto-border hover:border-crypto-primary/30'
                                         }`}
                                     >
-                                        <div className="flex items-center justify-between mb-1">
+                                        <div className="flex items-center justify-between mb-0.5">
                                             <span className="text-xs font-bold text-crypto-heading">{t.symbol.replace('USD', '')}</span>
                                             <span className={`text-[10px] font-semibold ${isUp ? 'text-crypto-success' : 'text-crypto-danger'}`}>
-                                                {isUp ? '+' : ''}{t.change24h?.toFixed(2)}%
+                                                {isUp ? '+' : ''}{t.change24h?.toFixed(1)}%
                                             </span>
                                         </div>
-                                        <div className="text-sm font-bold text-crypto-heading tabular-nums">
+                                        <div className="text-xs font-bold text-crypto-heading tabular-nums">
                                             ${t.price?.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                                         </div>
                                     </button>
@@ -329,6 +334,8 @@ const Dashboard = () => {
                 symbol={selectedSymbol}
                 onSuccess={() => {}}
             />
+
+            <MobileBottomNav />
         </div>
     );
 };

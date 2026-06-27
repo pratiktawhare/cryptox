@@ -10,6 +10,7 @@ import { useAuth } from "../context/AuthContext";
 import { useTradingMode } from "../context/TradingModeContext";
 import TradeConfirmDialog from "../components/trading/TradeConfirmDialog";
 import NotificationBell from "../components/common/NotificationBell";
+import MobileBottomNav from "../components/layout/MobileBottomNav";
 
 const SOCKET_URL = import.meta.env.VITE_API_URL
   ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '')
@@ -47,11 +48,11 @@ function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 function WalletBanner({ wallet, isPaper }) {
   if (!wallet) {
     return (
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3">
         {["Total Equity", "Available", "Used Margin", "uPnL"].map((label) => (
-          <div key={label} className="bg-crypto-card border border-crypto-border rounded-2xl p-4 animate-pulse">
+          <div key={label} className="bg-crypto-card border border-crypto-border rounded-2xl p-3 md:p-4 animate-pulse">
             <div className="text-[10px] text-crypto-muted uppercase tracking-wider mb-2">{label}</div>
-            <div className="h-6 w-24 bg-crypto-border rounded" />
+            <div className="h-5 md:h-6 w-20 md:w-24 bg-crypto-border rounded" />
           </div>
         ))}
       </div>
@@ -66,16 +67,16 @@ function WalletBanner({ wallet, isPaper }) {
     { label: "Unrealised PnL", value: (totalPnl >= 0 ? "+" : "") + "$" + fmt(totalPnl), color: pnlColor(totalPnl) },
   ];
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3">
       {stats.map(({ label, value, color, mr }) => (
-        <div key={label} className="bg-crypto-card border border-crypto-border rounded-2xl p-4">
+        <div key={label} className="bg-crypto-card border border-crypto-border rounded-2xl p-3 md:p-4">
           <div className="text-[10px] text-crypto-muted uppercase tracking-wider mb-1 flex items-center justify-between">
             {label}
             {isPaper && label === "Total Equity" && (
               <span className="text-[9px] text-yellow-400 bg-yellow-400/10 px-1 rounded">PAPER</span>
             )}
           </div>
-          <div className={"text-xl font-bold tabular-nums " + color}>{value}</div>
+          <div className={"text-lg md:text-xl font-bold tabular-nums " + color}>{value}</div>
           {mr > 0 && (
             <div className="mt-2">
               <div className="h-1 bg-crypto-border rounded-full overflow-hidden">
@@ -458,11 +459,11 @@ function PositionCard({ pos, livePrices, onClose, onModify, onPartialClose, onAd
   return (
     <>
       <div className={"bg-crypto-card border " + borderColor + " rounded-2xl transition-all duration-200"}>
-        <div className="p-4">
+        <div className="p-3 md:p-4">
           {/* Header */}
-          <div className="flex items-start justify-between gap-3 mb-4">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className={"w-10 h-10 rounded-xl flex items-center justify-center text-xl font-black flex-shrink-0 " + (isLong ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400")}>
+          <div className="flex items-start justify-between gap-2 mb-3 md:mb-4">
+            <div className="flex items-center gap-2 md:gap-3 min-w-0">
+              <div className={"w-8 h-8 md:w-10 md:h-10 rounded-xl flex items-center justify-center text-base md:text-xl font-black flex-shrink-0 " + (isLong ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400")}>
                 {isLong ? "↑" : "↓"}
               </div>
               <div className="min-w-0">
@@ -487,10 +488,10 @@ function PositionCard({ pos, livePrices, onClose, onModify, onPartialClose, onAd
               </div>
             </div>
             <div className="text-right flex-shrink-0">
-              <div className={"text-lg font-black tabular-nums leading-tight " + pnlColor(unrealisedPnl)}>
+              <div className={"text-base md:text-lg font-black tabular-nums leading-tight " + pnlColor(unrealisedPnl)}>
                 {unrealisedPnl >= 0 ? "+" : ""}{fmtP(unrealisedPnl)}
               </div>
-              <div className={"text-xs font-semibold tabular-nums " + pnlColor(roe)}>ROE {roe >= 0 ? "+" : ""}{fmt(roe, 2)}%</div>
+              <div className={"text-[10px] md:text-xs font-semibold tabular-nums " + pnlColor(roe)}>ROE {roe >= 0 ? "+" : ""}{fmt(roe, 2)}%</div>
             </div>
           </div>
 
@@ -1006,38 +1007,38 @@ const Positions = () => {
           </div>
           <div className="flex items-center gap-2">
             {isPaper && (
-              <button onClick={() => setResetOpen(true)} className="px-4 py-2 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-sm font-bold hover:bg-red-500/20 transition-all cursor-pointer flex items-center gap-1.5">
+              <button onClick={() => setResetOpen(true)} className="px-3 py-2 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-sm font-bold hover:bg-red-500/20 transition-all cursor-pointer flex items-center gap-1.5">
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 6.5" /></svg>
-                Reset Balance
+                <span className="hidden sm:inline">Reset Balance</span>
               </button>
             )}
             {positions.length > 0 && (
-              <div className={"text-xs font-semibold px-3 py-1 rounded-full border " + (totalUnrealised >= 0 ? "text-emerald-400 bg-emerald-400/10 border-emerald-400/20" : "text-red-400 bg-red-400/10 border-red-400/20")}>
+              <div className={"text-xs font-semibold px-3 py-1 rounded-full border hidden sm:block " + (totalUnrealised >= 0 ? "text-emerald-400 bg-emerald-400/10 border-emerald-400/20" : "text-red-400 bg-red-400/10 border-red-400/20")}>
                 {totalUnrealised >= 0 ? "+" : ""}{fmtP(totalUnrealised)} uPnL
               </div>
             )}
-            <button onClick={() => setTradeOpen(true)} className="px-4 py-2 bg-crypto-primary text-white rounded-xl text-sm font-bold hover:bg-crypto-primary/90 transition-all cursor-pointer flex items-center gap-1.5">
+            <button onClick={() => setTradeOpen(true)} className="px-3 sm:px-4 py-2 bg-crypto-primary text-white rounded-xl text-sm font-bold hover:bg-crypto-primary/90 transition-all cursor-pointer flex items-center gap-1.5">
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
-              New Order
+              <span className="hidden sm:inline">New Order</span>
             </button>
             <NotificationBell />
           </div>
         </div>
-        <div className="max-w-[1440px] mx-auto px-4 md:px-6 pb-2 flex gap-1">
+        <div className="max-w-[1440px] mx-auto px-4 md:px-6 pb-2 flex gap-1 overflow-x-auto no-scrollbar">
           {[
             { key: "positions", label: "Open (" + positions.length + ")" },
-            { key: "orders", label: "Open Orders (" + openOrders.length + ")" },
+            { key: "orders", label: "Orders (" + openOrders.length + ")" },
             { key: "history", label: "History (" + histTotal + ")" }
           ].map((t) => (
             <button key={t.key} onClick={() => setTab(t.key)}
-              className={"px-4 py-1.5 rounded-lg text-sm font-medium transition-all cursor-pointer " + (tab === t.key ? "bg-crypto-primary/10 text-crypto-primary border border-crypto-primary/20" : "text-crypto-muted hover:text-crypto-heading hover:bg-crypto-bg-subtle")}>
+              className={"px-3 md:px-4 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-all cursor-pointer whitespace-nowrap " + (tab === t.key ? "bg-crypto-primary/10 text-crypto-primary border border-crypto-primary/20" : "text-crypto-muted hover:text-crypto-heading hover:bg-crypto-bg-subtle")}>
               {t.label}
             </button>
           ))}
         </div>
       </div>
 
-      <div className="max-w-[1440px] mx-auto px-4 md:px-6 py-5 space-y-5">
+      <div className="max-w-[1440px] mx-auto px-4 md:px-6 py-3 md:py-5 pb-24 md:pb-5 space-y-3 md:space-y-5">
         <WalletBanner 
           wallet={wallet && isPaper ? {
             ...wallet,
@@ -1195,6 +1196,8 @@ const Positions = () => {
       <TradeConfirmDialog open={tradeOpen} onClose={() => setTradeOpen(false)} onSuccess={() => { load(); loadHistory(1); }} />
       {resetOpen && <ResetBalanceDialog onClose={() => setResetOpen(false)} onReset={handleResetBalance} />}
       {editingOrder && <EditOrderDialog order={editingOrder} onClose={() => setEditingOrder(null)} onSave={handleEditOrder} />}
+
+      <MobileBottomNav />
     </div>
   );
 };
