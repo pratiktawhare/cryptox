@@ -61,6 +61,8 @@ router.get('/performance', async (req, res) => {
                 maxDrawdown: paperWallet?.maxDrawdown    ?? 0,
                 returnPct:   paperWallet?.returnPct      ?? 0,
                 peakEquity:  paperWallet?.peakEquity     ?? 10000,
+                totalWins:   paperWallet?.totalWins      ?? 0,
+                totalLosses: paperWallet?.totalLosses    ?? 0,
             },
             live: {
                 totalTrades: liveTrades.length,

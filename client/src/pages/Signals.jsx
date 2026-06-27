@@ -378,12 +378,12 @@ const Signals = () => {
                             placeholder="Coin…"
                             value={search}
                             onChange={e => setSearch(e.target.value)}
-                            className="text-xs px-3 py-1.5 rounded-lg bg-crypto-input border border-crypto-border text-crypto-heading placeholder-crypto-muted focus:outline-none focus:ring-1 focus:ring-crypto-primary/30 focus:border-crypto-primary transition-all w-20 sm:w-32"
+                            className="hidden sm:block text-xs px-3 py-1.5 rounded-lg bg-crypto-input border border-crypto-border text-crypto-heading placeholder-crypto-muted focus:outline-none focus:ring-1 focus:ring-crypto-primary/30 focus:border-crypto-primary transition-all w-20 sm:w-32"
                         />
                         <button
                             onClick={() => handleAnalyzeNow(search || 'RANDOM')}
                             disabled={scanning}
-                            className="px-3 py-1.5 bg-crypto-primary/10 text-crypto-primary border border-crypto-primary/20 rounded-lg text-xs font-semibold hover:bg-crypto-primary/20 transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1 whitespace-nowrap"
+                            className="hidden sm:flex px-3 py-1.5 bg-crypto-primary/10 text-crypto-primary border border-crypto-primary/20 rounded-lg text-xs font-semibold hover:bg-crypto-primary/20 transition-all cursor-pointer disabled:opacity-50 items-center gap-1 whitespace-nowrap"
                         >
                             {scanning ? (
                                 <>
@@ -397,6 +397,29 @@ const Signals = () => {
                         </button>
                         <NotificationBell />
                     </div>
+                </div>
+
+                {/* Mobile search / scan row */}
+                <div className="sm:hidden px-4 pb-2 flex gap-2">
+                    <input
+                        type="text"
+                        placeholder="Scan coin (e.g. SOLUSD)..."
+                        value={search}
+                        onChange={e => setSearch(e.target.value)}
+                        className="flex-1 text-xs px-3 py-1.5 rounded-lg bg-crypto-input border border-crypto-border text-crypto-heading placeholder-crypto-muted/50 focus:outline-none focus:ring-1 focus:ring-crypto-primary/30 focus:border-crypto-primary transition-all"
+                    />
+                    <button
+                        onClick={() => handleAnalyzeNow(search || 'RANDOM')}
+                        disabled={scanning}
+                        className="px-4 py-1.5 bg-crypto-primary text-white rounded-lg text-xs font-semibold hover:bg-crypto-primary/90 transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5 whitespace-nowrap justify-center min-w-[76px]"
+                    >
+                        {scanning ? (
+                            <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                                <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                        ) : '⚡ Scan'}
+                    </button>
                 </div>
 
                 {/* Mobile quick-coin row */}

@@ -256,7 +256,8 @@ const Markets = () => {
 
                     {/* Right: search + view toggle */}
                     <div className="flex items-center gap-2 flex-1 min-w-0 justify-end">
-                        <div className="relative flex-1 max-w-xs">
+                        {/* Desktop Search Bar */}
+                        <div className="hidden sm:block relative flex-1 max-w-xs">
                             <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-crypto-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
                                 <circle cx="11" cy="11" r="8" /><path strokeLinecap="round" d="M21 21l-4.35-4.35" />
                             </svg>
@@ -292,6 +293,22 @@ const Markets = () => {
                             ))}
                         </div>
                         <NotificationBell />
+                    </div>
+                </div>
+
+                {/* Mobile search row */}
+                <div className="sm:hidden px-4 pb-2">
+                    <div className="relative w-full">
+                        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-crypto-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                            <circle cx="11" cy="11" r="8" /><path strokeLinecap="round" d="M21 21l-4.35-4.35" />
+                        </svg>
+                        <input
+                            type="text"
+                            placeholder="Search coins…"
+                            value={search}
+                            onChange={e => setSearch(e.target.value)}
+                            className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg bg-crypto-input border border-crypto-border text-crypto-heading placeholder-crypto-muted focus:outline-none focus:ring-1 focus:ring-crypto-primary/30 focus:border-crypto-primary transition-all"
+                        />
                     </div>
                 </div>
 

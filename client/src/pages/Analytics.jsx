@@ -309,7 +309,7 @@ export default function Analytics() {
                                         <h3 className="text-sm font-bold text-crypto-heading mb-3 md:mb-4">Signal Outcomes</h3>
                                         <WinLossDonut
                                             wins={signals?.wins ?? 0}
-                                            losses={(signals?.total ?? 0) - (signals?.wins ?? 0) - ((signals?.total ?? 0) - (signals?.wins ?? 0))}
+                                            losses={(signals?.total ?? 0) - (signals?.wins ?? 0)}
                                             timeouts={0}
                                         />
                                     </div>

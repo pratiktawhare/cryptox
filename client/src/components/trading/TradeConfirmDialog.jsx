@@ -228,9 +228,9 @@ export default function TradeConfirmDialog({ open, onClose, signal, symbol: symb
         <div
             ref={overlayRef}
             onClick={handleOverlayClick}
-            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-0 sm:p-4 animate-fade-in"
+            className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-0 sm:p-4 animate-fade-in"
         >
-            <div className={`w-full bg-crypto-card border border-crypto-border rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden transition-all duration-300 ${
+            <div className={`w-[calc(100%-1rem)] mx-2 mb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] sm:mb-0 sm:mx-0 sm:w-full bg-crypto-card border border-crypto-border rounded-2xl sm:rounded-2xl shadow-2xl overflow-hidden transition-all duration-300 ${
                 isValidSymbol ? 'sm:max-w-5xl' : 'sm:max-w-md'
             }`}
                 style={{ boxShadow: `0 0 60px ${isBuy ? '#10b98120' : '#ef444420'}` }}
