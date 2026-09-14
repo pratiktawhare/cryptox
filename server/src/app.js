@@ -24,8 +24,10 @@ const analyticsRoutes     = require('./routes/analytics');
 const notificationRoutes  = require('./routes/notifications');
 const signalEngine        = require('./services/ai/SignalEngine');
 const signalTracker       = require('./services/ai/SignalTracker');
+const automationEngine    = require('./services/ai/AutomationEngine');
 const positionTracker     = require('./services/trading/PositionTracker');
 const paperEngine         = require('./services/trading/PaperTradingEngine');
+const orderExecutor       = require('./services/trading/OrderExecutor');
 const cron                = require('node-cron');
 const User                = require('./models/User');
 
@@ -60,6 +62,7 @@ app.use('/api/trading',       tradingRoutes);
 app.use('/api/paper',         paperRoutes);
 app.use('/api/analytics',     analyticsRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/automation',    require('./routes/automation'));
 
 const healthHandler = (_req, res) => {
     res.json({
@@ -146,6 +149,26 @@ async function start() {
     signalTracker.start(io, wsManager);
     app.set('signalTracker', signalTracker);
 
+    // 7. Init AutomationEngine — independent paper + live automation
+    automationEngine.init(io, signalEngine, paperEngine, orderExecutor, wsManager);
+    app.set('automationEngine', automationEngine);
+
+    // Restore automation if it was enabled before server restart
+    try {
+        const UserPreferences = require('./models/UserPreferences');
+        const prefs = await UserPreferences.findOne({});
+        if (prefs?.paperAuto?.enabled) {
+            console.log('[AutomationEngine] Restoring paper automation after restart…');
+            automationEngine.startMode('paper');
+        }
+        if (prefs?.liveAuto?.enabled) {
+            console.log('[AutomationEngine] Restoring live automation after restart…');
+            automationEngine.startMode('live');
+        }
+    } catch (e) {
+        console.warn('[AutomationEngine] Could not restore automation state:', e.message);
+    }
+
     // 7. Daily summary cron — fires at midnight every day
     cron.schedule('0 0 * * *', async () => {
         try {
@@ -188,6 +211,8 @@ function shutdown(signal) {
     console.log(`\n${signal} received — shutting down gracefully…`);
     signalEngine.stop();
     signalTracker.stop();
+    automationEngine.stopMode('paper');
+    automationEngine.stopMode('live');
     positionTracker.stop();
     paperEngine.stop();
     productCatalog.destroy();

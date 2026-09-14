@@ -1,0 +1,162 @@
+/**
+ * automation.js — Express routes for AI Automation control
+ *
+ * GET  /api/automation/status          → current running state + config
+ * POST /api/automation/start           → start automation for a mode
+ * POST /api/automation/stop            → stop automation for a mode
+ * GET  /api/automation/logs            → recent AutomationLog entries
+ * GET  /api/automation/daily-reports   → paginated DailyReport entries
+ * PATCH /api/automation/settings       → save automation settings for a mode
+ */
+
+const express         = require('express');
+const router          = express.Router();
+const authMiddleware  = require('../middleware/auth');
+const AutomationLog   = require('../models/AutomationLog');
+const DailyReport     = require('../models/DailyReport');
+const UserPreferences = require('../models/UserPreferences');
+const automationEngine = require('../services/ai/AutomationEngine');
+
+// All routes require auth
+router.use(authMiddleware);
+
+// ── GET /api/automation/status ───────────────────────────────────────────────
+router.get('/status', async (req, res) => {
+    try {
+        const prefs  = await UserPreferences.findOne({});
+        const status = automationEngine.getStatus();
+
+        res.json({
+            paper: {
+                running:  status.paper,
+                config:   prefs?.paperAuto || {},
+            },
+            live: {
+                running:  status.live,
+                config:   prefs?.liveAuto || {},
+            },
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── POST /api/automation/start ───────────────────────────────────────────────
+router.post('/start', async (req, res) => {
+    const { mode } = req.body;
+    if (!['paper', 'live'].includes(mode)) {
+        return res.status(400).json({ error: 'mode must be "paper" or "live"' });
+    }
+
+    try {
+        // Enable in DB first
+        await UserPreferences.updateMany(
+            {},
+            { $set: { [`${mode}Auto.enabled`]: true } }
+        );
+
+        await automationEngine.startMode(mode);
+        res.json({ success: true, mode, running: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── POST /api/automation/stop ────────────────────────────────────────────────
+router.post('/stop', async (req, res) => {
+    const { mode } = req.body;
+    if (!['paper', 'live'].includes(mode)) {
+        return res.status(400).json({ error: 'mode must be "paper" or "live"' });
+    }
+
+    try {
+        // Disable in DB
+        await UserPreferences.updateMany(
+            {},
+            { $set: { [`${mode}Auto.enabled`]: false } }
+        );
+
+        await automationEngine.stopMode(mode);
+        res.json({ success: true, mode, running: false });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── PATCH /api/automation/settings ──────────────────────────────────────────
+router.patch('/settings', async (req, res) => {
+    const { mode, settings } = req.body;
+    if (!['paper', 'live'].includes(mode)) {
+        return res.status(400).json({ error: 'mode must be "paper" or "live"' });
+    }
+
+    const ALLOWED = [
+        'intervalMinutes', 'estimatedWalletUSD', 'tradePct',
+        'minConfidence', 'minLeverage', 'maxLeverage',
+        'trailStopLoss', 'dailyReportEnabled', 'dailyReportTime',
+    ];
+
+    const update = {};
+    for (const key of ALLOWED) {
+        if (settings[key] !== undefined) {
+            update[`${mode}Auto.${key}`] = settings[key];
+        }
+    }
+
+    try {
+        const prefs = await UserPreferences.findOneAndUpdate(
+            {},
+            { $set: update },
+            { returnDocument: 'after' }
+        );
+
+        // If automation is running and interval changed, restart to pick up new interval
+        const isRunning = automationEngine.getStatus()[mode];
+        if (isRunning && settings.intervalMinutes !== undefined) {
+            await automationEngine.restartMode(mode);
+        }
+
+        res.json({ success: true, config: prefs[`${mode}Auto`] });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── GET /api/automation/logs ─────────────────────────────────────────────────
+router.get('/logs', async (req, res) => {
+    try {
+        const { mode, limit = 50, page = 1 } = req.query;
+        const query = mode ? { mode } : {};
+        const skip  = (parseInt(page) - 1) * parseInt(limit);
+
+        const [logs, total] = await Promise.all([
+            AutomationLog.find(query)
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(parseInt(limit)),
+            AutomationLog.countDocuments(query),
+        ]);
+
+        res.json({ logs, total, page: parseInt(page), limit: parseInt(limit) });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── GET /api/automation/daily-reports ───────────────────────────────────────
+router.get('/daily-reports', async (req, res) => {
+    try {
+        const { mode, limit = 30 } = req.query;
+        const query = mode ? { mode } : {};
+
+        const reports = await DailyReport.find(query)
+            .sort({ date: -1 })
+            .limit(parseInt(limit));
+
+        res.json({ reports });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+module.exports = router;

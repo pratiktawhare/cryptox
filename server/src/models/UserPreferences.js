@@ -48,7 +48,39 @@ const preferencesSchema = new mongoose.Schema({
     groqApiKeyEncrypted:    { type: String, default: '' },
     deepseekApiKeyEncrypted:{ type: String, default: '' },
     useCustomGroqKey:       { type: Boolean, default: true },
-    useCustomDeepseekKey:   { type: Boolean, default: true }
+    useCustomDeepseekKey:   { type: Boolean, default: true },
+
+    // ── Paper Trading Automation (completely independent of live) ─────────────
+    paperAuto: {
+        enabled:             { type: Boolean, default: false },
+        intervalMinutes:     { type: Number,  default: 30,   min: 15, max: 240 },
+        estimatedWalletUSD:  { type: Number,  default: 1000, min: 10 },
+        tradePct:            { type: Number,  default: 20,   min: 5,  max: 80  }, // % of estimatedWalletUSD → margin per trade
+        minConfidence:       { type: Number,  default: 70,   min: 60, max: 95  },
+        minLeverage:         { type: Number,  default: 10,   min: 2,  max: 20  },
+        maxLeverage:         { type: Number,  default: 20,   min: 2,  max: 20  },
+        trailStopLoss:       { type: Boolean, default: true },
+        dailyReportEnabled:  { type: Boolean, default: true },
+        dailyReportTime:     { type: String,  default: '23:59' }, // HH:MM IST
+        lastCycleAt:         { type: Date,    default: null },
+        nextCycleAt:         { type: Date,    default: null },
+    },
+
+    // ── Live Trading Automation (completely independent of paper) ─────────────
+    liveAuto: {
+        enabled:             { type: Boolean, default: false },
+        intervalMinutes:     { type: Number,  default: 30,   min: 15, max: 240 },
+        estimatedWalletUSD:  { type: Number,  default: 1000, min: 10 },
+        tradePct:            { type: Number,  default: 20,   min: 5,  max: 80  },
+        minConfidence:       { type: Number,  default: 75,   min: 60, max: 95  }, // stricter default for real money
+        minLeverage:         { type: Number,  default: 10,   min: 2,  max: 20  },
+        maxLeverage:         { type: Number,  default: 20,   min: 2,  max: 20  },
+        trailStopLoss:       { type: Boolean, default: true },
+        dailyReportEnabled:  { type: Boolean, default: true },
+        dailyReportTime:     { type: String,  default: '23:59' },
+        lastCycleAt:         { type: Date,    default: null },
+        nextCycleAt:         { type: Date,    default: null },
+    },
 }, {
     timestamps: true
 });

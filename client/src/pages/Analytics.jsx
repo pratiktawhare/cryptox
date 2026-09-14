@@ -17,6 +17,92 @@ import { useTradingMode } from '../context/TradingModeContext';
 import NotificationBell from '../components/common/NotificationBell';
 import MobileBottomNav from '../components/layout/MobileBottomNav';
 
+// ─── Daily Report Card ────────────────────────────────────────────────────────
+
+function DailyReportCard({ report }) {
+    const [open, setOpen] = useState(false);
+    const profitable = report.totalPnl >= 0;
+    const pnlSign    = profitable ? '+' : '';
+
+    return (
+        <div
+            className={`bg-crypto-card border rounded-xl overflow-hidden transition-all duration-200 cursor-pointer hover:shadow-lg ${
+                profitable ? 'border-emerald-500/30' : 'border-red-500/30'
+            }`}
+            onClick={() => setOpen(o => !o)}
+        >
+            {/* Top colour bar */}
+            <div className={`h-0.5 w-full ${profitable ? 'bg-gradient-to-r from-emerald-500/50 to-emerald-400' : 'bg-gradient-to-r from-red-500/50 to-red-400'}`} />
+
+            <div className="p-3 md:p-4">
+                <div className="flex items-center justify-between gap-2">
+                    <div>
+                        <div className="text-xs font-bold text-crypto-heading">{report.date}</div>
+                        <div className="text-[10px] text-crypto-muted mt-0.5">
+                            {report.totalTrades} trades · {report.totalCycles} cycles
+                        </div>
+                    </div>
+                    <div className="text-right">
+                        <div className={`text-sm font-bold tabular-nums ${profitable ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {pnlSign}${report.totalPnl?.toFixed(2)}
+                        </div>
+                        <div className="text-[10px] text-crypto-muted">
+                            {report.winRate?.toFixed(0)}% win · ${report.totalMarginUsed?.toFixed(0)} deployed
+                        </div>
+                    </div>
+                </div>
+
+                {/* Quick stats row */}
+                <div className="grid grid-cols-4 gap-1.5 mt-2.5">
+                    {[
+                        { label: 'Trades',  value: report.totalTrades },
+                        { label: 'Wins',    value: report.wins, color: 'text-emerald-400' },
+                        { label: 'Losses',  value: report.losses, color: 'text-red-400' },
+                        { label: 'Avg Conf', value: `${report.avgConfidence?.toFixed(0)}%` },
+                    ].map(({ label, value, color }) => (
+                        <div key={label} className="bg-crypto-bg-subtle rounded-lg p-1.5 text-center">
+                            <div className="text-[9px] text-crypto-muted mb-0.5">{label}</div>
+                            <div className={`text-[11px] font-bold ${color || 'text-crypto-heading'}`}>{value}</div>
+                        </div>
+                    ))}
+                </div>
+
+                {/* Expanded detail */}
+                {open && (
+                    <div className="mt-3 pt-3 border-t border-crypto-border/40 space-y-2 animate-fade-in">
+                        {report.bestTrade?.symbol && (
+                            <div className="flex items-center justify-between text-xs">
+                                <span className="text-crypto-muted">🏆 Best</span>
+                                <span className="text-emerald-400 font-semibold">
+                                    {report.bestTrade.symbol?.replace('USD','/USD')} +${report.bestTrade.pnl?.toFixed(2)}
+                                </span>
+                            </div>
+                        )}
+                        {report.worstTrade?.symbol && (
+                            <div className="flex items-center justify-between text-xs">
+                                <span className="text-crypto-muted">📉 Worst</span>
+                                <span className="text-red-400 font-semibold">
+                                    {report.worstTrade.symbol?.replace('USD','/USD')} ${report.worstTrade.pnl?.toFixed(2)}
+                                </span>
+                            </div>
+                        )}
+                        <div className="flex items-center justify-between text-xs">
+                            <span className="text-crypto-muted">Avg Leverage</span>
+                            <span className="text-crypto-heading font-semibold">{report.avgLeverage?.toFixed(1)}×</span>
+                        </div>
+                        {report.skipped > 0 && (
+                            <div className="flex items-center justify-between text-xs">
+                                <span className="text-crypto-muted">Skipped (low balance)</span>
+                                <span className="text-amber-400 font-semibold">{report.skipped}</span>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
 // ─── Mini SVG Equity Curve ────────────────────────────────────────────────────
 
 function EquityCurve({ points = [], width = 600, height = 180 }) {
@@ -159,38 +245,49 @@ export default function Analytics() {
     const navigate = useNavigate();
     const { mode, isPaper } = useTradingMode();
 
-    const [performance, setPerformance] = useState(null);
-    const [equity,      setEquity]      = useState([]);
-    const [signalStats, setSignalStats] = useState(null);
-    const [learning,    setLearning]    = useState(null);
-    const [bestWorst,   setBestWorst]   = useState(null);
-    const [loading,     setLoading]     = useState(true);
-    const [activeTab,   setActiveTab]   = useState('overview');
+    const [performance,     setPerformance]     = useState(null);
+    const [equity,          setEquity]          = useState([]);
+    const [signalStats,     setSignalStats]     = useState(null);
+    const [learning,        setLearning]        = useState(null);
+    const [bestWorst,       setBestWorst]       = useState(null);
+    const [loading,         setLoading]         = useState(true);
+    const [activeTab,       setActiveTab]       = useState('overview');
+    const [dailyReports,    setDailyReports]    = useState([]);
+    const [dailyReportMode, setDailyReportMode] = useState('paper');
 
     const fetchAll = useCallback(async () => {
         try {
-            const [perfRes, eqRes, sigRes, learnRes, bwRes] = await Promise.all([
+            const [perfRes, eqRes, sigRes, learnRes, bwRes, drRes] = await Promise.all([
                 api.get('/analytics/performance'),
                 api.get(`/analytics/equity-curve?mode=${isPaper ? 'paper' : 'live'}&limit=150`),
                 api.get('/analytics/signals?limit=100'),
                 api.get('/analytics/learning'),
                 api.get(`/analytics/best-worst?mode=${isPaper ? 'paper' : 'live'}`),
+                api.get(`/automation/daily-reports?mode=${dailyReportMode}&limit=30`).catch(() => ({ data: { reports: [] } })),
             ]);
             setPerformance(perfRes.data);
             setEquity(eqRes.data.points || []);
             setSignalStats(sigRes.data);
             setLearning(learnRes.data);
             setBestWorst(bwRes.data);
+            setDailyReports(drRes.data.reports || []);
         } catch (err) {
             console.error('[Analytics] fetch error:', err.message);
         } finally {
             setLoading(false);
         }
-    }, [isPaper]);
+    }, [isPaper, dailyReportMode]);
 
     useEffect(() => {
         fetchAll();
     }, [fetchAll]);
+
+    // Re-fetch daily reports when mode tab switches
+    useEffect(() => {
+        api.get(`/automation/daily-reports?mode=${dailyReportMode}&limit=30`)
+            .then(r => setDailyReports(r.data.reports || []))
+            .catch(() => {});
+    }, [dailyReportMode]);
 
     const perf   = performance;
     const wallet = perf?.paper;
@@ -528,6 +625,47 @@ export default function Analytics() {
                     </>
                 )}
             </main>
+
+            {/* ── Daily AI Automation Reports ── */}
+            <section className="mt-8">
+                <div className="flex items-center justify-between mb-3">
+                    <div>
+                        <h2 className="text-sm font-bold text-crypto-heading">Daily AI Reports</h2>
+                        <p className="text-[10px] text-crypto-muted mt-0.5">Automation performance summaries generated at end of each day</p>
+                    </div>
+                    <div className="flex gap-1">
+                        {['paper','live'].map(m => (
+                            <button
+                                key={m}
+                                onClick={() => setDailyReportMode(m)}
+                                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                                    dailyReportMode === m
+                                        ? m === 'live'
+                                            ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                            : 'bg-crypto-primary/10 text-crypto-primary border border-crypto-primary/20'
+                                        : 'text-crypto-muted hover:text-crypto-heading'
+                                }`}
+                            >
+                                {m === 'live' ? '💰' : '📄'} {m.charAt(0).toUpperCase() + m.slice(1)}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                {dailyReports.length === 0 ? (
+                    <div className="bg-crypto-card border border-crypto-border rounded-xl p-8 text-center">
+                        <div className="text-2xl mb-2">📊</div>
+                        <p className="text-sm text-crypto-muted">No daily reports yet</p>
+                        <p className="text-xs text-crypto-muted mt-1">Reports appear here after the first day of automation running</p>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                        {dailyReports.map(r => (
+                            <DailyReportCard key={`${r.date}-${r.mode}`} report={r} />
+                        ))}
+                    </div>
+                )}
+            </section>
 
             <MobileBottomNav />
         </div>

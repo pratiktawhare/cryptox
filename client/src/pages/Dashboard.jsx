@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
+import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import ThemeToggle from '../components/layout/ThemeToggle';
@@ -11,6 +12,7 @@ import PortfolioSummary from '../components/dashboard/PortfolioSummary';
 import TradingChart from '../components/dashboard/TradingChart';
 import ApiKeyManager from '../components/profile/ApiKeyManager';
 import AiPreferencesManager from '../components/profile/AiPreferencesManager';
+import AutomationSettings from '../components/profile/AutomationSettings';
 import Button from '../components/common/Button';
 import TradeConfirmDialog from '../components/trading/TradeConfirmDialog';
 
@@ -61,6 +63,7 @@ const Dashboard = () => {
     const [livePrices, setLivePrices] = useState({});
     const [socketInstance, setSocketInstance] = useState(null);
     const [wsConnected, setWsConnected] = useState(false);
+    const [autoStatus, setAutoStatus] = useState({ paper: false, live: false });
 
     // Read ?coin= from URL (navigated from Markets page)
     const urlCoin = searchParams.get('coin');
@@ -95,7 +98,19 @@ const Dashboard = () => {
             setLivePrices((prev) => ({ ...prev, ...batch }));
         });
 
+        // Listen for automation cycles (updates the indicator)
+        socket.on('automation_cycle', (data) => {
+            setAutoStatus(prev => ({ ...prev, [data.mode]: true }));
+        });
+
         return () => socket.disconnect();
+    }, []);
+
+    // Fetch automation status on mount
+    useEffect(() => {
+        api.get('/automation/status')
+            .then(r => setAutoStatus({ paper: r.data.paper?.running || false, live: r.data.live?.running || false }))
+            .catch(() => {});
     }, []);
 
     // Sorted tickers (show only coins that have live prices)
@@ -197,6 +212,18 @@ const Dashboard = () => {
                             <TradingModeToggle />
                         </div>
 
+                        {/* Automation status pill */}
+                        {(autoStatus.paper || autoStatus.live) && (
+                            <button
+                                onClick={() => setActiveTab('settings')}
+                                title="AI Automation is running — click to manage"
+                                className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold cursor-pointer hover:bg-emerald-500/20 transition-all"
+                            >
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                Auto {[autoStatus.paper && 'Paper', autoStatus.live && 'Live'].filter(Boolean).join('+')}
+                            </button>
+                        )}
+
                         <div className="hidden sm:block h-5 w-px bg-crypto-border" />
 
                         {/* Notification Bell */}
@@ -255,9 +282,12 @@ const Dashboard = () => {
 
                 {/* Settings tab */}
                 {activeTab === 'settings' && (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                        <ApiKeyManager />
-                        <AiPreferencesManager />
+                    <div className="space-y-5">
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                            <ApiKeyManager />
+                            <AiPreferencesManager />
+                        </div>
+                        <AutomationSettings />
                     </div>
                 )}
 

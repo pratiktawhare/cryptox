@@ -537,7 +537,7 @@ class SignalEngine {
 
         // ── Specific symbol: analyse, then auto-retry up to 2 alternative coins on NO_TRADE ──
 
-        const MAX_RETRIES = 2;
+        const MAX_RETRIES = 4;
         const trySymbols  = [symbol];
 
         // Pick alternative coins from catalog in similar price range
