@@ -37,6 +37,7 @@ const paperPositionSchema = new mongoose.Schema({
     // Source
     signalId:   { type: mongoose.Schema.Types.ObjectId, ref: 'TradeSignal', default: null },
     tradeHistoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'TradeHistory', default: null },
+    source:     { type: String, enum: ['manual', 'signal', 'automation'], default: 'manual' },
 
 }, { timestamps: true });
 

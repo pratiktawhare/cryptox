@@ -23,19 +23,23 @@ router.use(authMiddleware);
 // ── GET /api/automation/status ───────────────────────────────────────────────
 router.get('/status', async (req, res) => {
     try {
-        const prefs  = await UserPreferences.findOne({});
+        const prefs  = await UserPreferences.findOne({}).sort({ updatedAt: -1 });
         const status = automationEngine.getStatus();
+
+        // For nextCycleAt: prefer live engine value, fall back to DB value
+        const paperNextAt = (status.paper?.nextCycleAt) || (prefs?.paperAuto?.nextCycleAt ? new Date(prefs.paperAuto.nextCycleAt).getTime() : null);
+        const liveNextAt  = (status.live?.nextCycleAt)  || (prefs?.liveAuto?.nextCycleAt  ? new Date(prefs.liveAuto.nextCycleAt).getTime()  : null);
 
         res.json({
             paper: {
-                running:     typeof status.paper === 'object' ? !!status.paper.running : !!status.paper,
-                nextCycleAt: typeof status.paper === 'object' ? status.paper.nextCycleAt : (prefs?.paperAuto?.nextCycleAt || null),
-                config:      prefs?.paperAuto || {},
+                running:         typeof status.paper === 'object' ? !!status.paper.running : !!status.paper,
+                nextCycleAt:     paperNextAt,
+                config:          prefs?.paperAuto || {},
             },
             live: {
-                running:     typeof status.live === 'object' ? !!status.live.running : !!status.live,
-                nextCycleAt: typeof status.live === 'object' ? status.live.nextCycleAt : (prefs?.liveAuto?.nextCycleAt || null),
-                config:      prefs?.liveAuto || {},
+                running:         typeof status.live === 'object' ? !!status.live.running : !!status.live,
+                nextCycleAt:     liveNextAt,
+                config:          prefs?.liveAuto || {},
             },
         });
     } catch (err) {

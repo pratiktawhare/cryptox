@@ -231,6 +231,7 @@ class PaperTradingEngine {
                 roe:         0,
                 liquidationPrice: liqPrice,
                 signalId:    params.signalId || null,
+                source:      params.source || (params.signalId ? 'signal' : 'manual'),
             });
 
             console.log(`[PaperEngine] ✅ Paper ${params.side.toUpperCase()} ${size} ${params.symbol} @ $${fillPrice} | Margin: $${margin.toFixed(2)}`);

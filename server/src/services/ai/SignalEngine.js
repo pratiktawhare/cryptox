@@ -115,7 +115,7 @@ class SignalEngine {
         let walletContext = { availableBalance: 10000, tradeBudget: 3000, mode: 'paper' };
         try {
             const [dbPrefs, paperWallet] = await Promise.all([
-                UserPreferences.findOne({}).lean(),
+                UserPreferences.findOne({}).sort({ updatedAt: -1 }).lean(),
                 PaperWallet.findOne({}).lean(),
             ]);
             if (dbPrefs) userPrefs = { ...userPrefs, ...dbPrefs };

@@ -102,10 +102,12 @@ const Dashboard = () => {
 
         // Listen for automation events
         socket.on('automation_cycle', (data) => {
+            // Use nextCycleAt from server; do NOT hardcode 30 minutes
             setAutoStatus(prev => ({
                 ...prev,
                 [data.mode]: true,
-                [`${data.mode}NextAt`]: Date.now() + 30 * 60 * 1000
+                // data.nextCycleAt is the real timestamp sent by AutomationEngine
+                [`${data.mode}NextAt`]: data.nextCycleAt || prev[`${data.mode}NextAt`],
             }));
         });
 

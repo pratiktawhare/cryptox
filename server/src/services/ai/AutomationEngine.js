@@ -79,7 +79,10 @@ class AutomationEngine {
         this._running[mode] = true;
         const intervalMin = cfg?.intervalMinutes || 30;
         this._nextCycleAt[mode] = Date.now() + intervalMin * 60 * 1000;
-        console.log(`[AutomationEngine] ▶ Starting ${mode} automation (every ${intervalMin}m)`);
+        console.log(`[AutomationEngine] ▶ Starting ${mode} automation (every ${intervalMin}m, next at ${new Date(this._nextCycleAt[mode]).toISOString()})`);
+
+        // Persist nextCycleAt so page-refresh shows correct countdown
+        UserPreferences.updateMany({}, { $set: { [`${mode}Auto.nextCycleAt`]: new Date(this._nextCycleAt[mode]) } }).catch(() => {});
 
         this._emit('automation_status', this.getStatus());
 
@@ -139,8 +142,8 @@ class AutomationEngine {
         this._emit('automation_status', this.getStatus());
 
         // ── Balance check ────────────────────────────────────────────────────
-        const walletBalance = await this._getBalance(mode);
-        const minBalance    = cfg.estimatedWalletUSD * 0.05;
+        const walletBalance = await this._getBalance(mode, prefs);
+        const minBalance    = (cfg.estimatedWalletUSD || 100) * 0.05;
 
         if (walletBalance !== null && walletBalance < minBalance) {
             console.log(`[AutomationEngine] ⚠ ${mode} balance $${walletBalance.toFixed(2)} < $${minBalance.toFixed(2)} minimum — skipping`);
@@ -153,14 +156,19 @@ class AutomationEngine {
         }
 
         // ── Calculate margin for this trade ──────────────────────────────────
-        const marginBudget = (cfg.estimatedWalletUSD * cfg.tradePct) / 100;
+        let marginBudget = ((cfg.estimatedWalletUSD || 100) * (cfg.tradePct || 20)) / 100;
+        if (walletBalance !== null && walletBalance > 0) {
+            marginBudget = Math.min(marginBudget, walletBalance * 0.95);
+        }
 
         // ── Run signal scan (tries up to 5 coins with built-in retry) ────────
         // Use 'RANDOM' which scans cheap coins; fallback to BTCUSD if catalog not ready
         const scanSymbol = (this._signalEngine?.catalog?.isReady) ? 'RANDOM' : 'BTCUSD';
 
         // Build userPrefs override with automation's own confidence/leverage settings
+        const rawPrefs = (prefs && typeof prefs.toObject === 'function') ? prefs.toObject() : (prefs || {});
         const scanPrefs = {
+            ...rawPrefs,
             aiProvider:   prefs.aiProvider || 'groq',
             maxLeverage:  cfg.maxLeverage  || 20,
             minLeverage:  cfg.minLeverage  || 10,
@@ -183,26 +191,28 @@ class AutomationEngine {
             return;
         }
 
-        const signal = scanResult?.signal || scanResult?.saved;
+        // analyzeNow returns { signal (raw AI), saved (DB doc), mtf }
+        // Use the DB-saved doc first (has _id for signalId linking), fall back to raw signal
+        const savedSignalDoc = scanResult?.saved;
+        const signal = scanResult?.signal || savedSignalDoc;
+        if (signal && savedSignalDoc?._id) signal._id = savedSignalDoc._id;
 
         // ── NO_TRADE ─────────────────────────────────────────────────────────
-        if (!signal || !scanResult || scanResult.action === 'NO_TRADE' ||
-            (signal.action === 'NO_TRADE') ||
-            (signal.confidence || 0) < cfg.minConfidence) {
-
+        if (!signal || scanResult?.action === 'NO_TRADE' ||
+            signal.action === 'NO_TRADE') {
             const conf = signal?.confidence || scanResult?.confidence || 0;
-            console.log(`[AutomationEngine] ⬜ ${mode} NO_TRADE (best conf: ${conf}%)`);
+            const reason = scanResult?.reasoning || signal?.reasoning || 'No valid setup found after all retries';
+            console.log(`[AutomationEngine] ⬜ ${mode} NO_TRADE (best conf: ${conf}%): ${reason.slice(0,80)}`);
             await AutomationLog.create({
-                mode, date, cycleAction: 'NO_TRADE', confidence: conf,
-                notes: scanResult?.reasoning || 'No valid setup found after all retries'
+                mode, date, cycleAction: 'NO_TRADE', confidence: conf, notes: reason
             });
-            this._emit('automation_cycle', { mode, action: 'NO_TRADE', confidence: conf });
+            this._emit('automation_cycle', { mode, action: 'NO_TRADE', confidence: conf, nextCycleAt: this._nextCycleAt[mode] });
             return;
         }
 
         // ── Confidence gate ───────────────────────────────────────────────────
-        if (signal.confidence < cfg.minConfidence) {
-            console.log(`[AutomationEngine] ⬜ ${mode} confidence ${signal.confidence}% < ${cfg.minConfidence}% threshold`);
+        if ((signal.confidence || 0) < (cfg.minConfidence || 70)) {
+            console.log(`[AutomationEngine] ⬜ ${mode} confidence ${signal.confidence}% < ${cfg.minConfidence}% threshold — skipping`);
             await AutomationLog.create({
                 mode, date, cycleAction: 'NO_TRADE', confidence: signal.confidence,
                 notes: `Confidence ${signal.confidence}% below minimum ${cfg.minConfidence}%`
@@ -272,12 +282,13 @@ class AutomationEngine {
         // ── Real-time event ───────────────────────────────────────────────────
         this._emit('automation_cycle', {
             mode,
-            action:     signal.action,
-            symbol:     signal.symbol,
-            confidence: signal.confidence,
+            action:      signal.action,
+            symbol:      signal.symbol,
+            confidence:  signal.confidence,
             leverage,
-            margin:     actualMargin,
-            error:      executeErr,
+            margin:      actualMargin,
+            error:       executeErr,
+            nextCycleAt: this._nextCycleAt[mode],  // ← real next-cycle timestamp
         });
     }
 
@@ -288,9 +299,18 @@ class AutomationEngine {
 
         const PaperWallet = require('../../models/PaperWallet');
         const User = require('../../models/User');
-        const pw = await PaperWallet.findOne({});
-        const user = await User.findOne({});
-        const userId = pw?.userId ? String(pw.userId) : (user?._id ? String(user._id) : 'default_user');
+
+        // Prefer userId from loaded prefs (which are the active user's prefs)
+        let userId = prefs?.userId ? String(prefs.userId) : null;
+        if (!userId) {
+            const pw = await PaperWallet.findOne({}).sort({ updatedAt: -1 });
+            userId = pw?.userId ? String(pw.userId) : null;
+        }
+        if (!userId) {
+            const user = await User.findOne({});
+            userId = user?._id ? String(user._id) : 'default_user';
+        }
+        console.log(`[AutomationEngine] 🤖 Placing paper order for userId: ${userId} | ${signal.symbol} ${signal.action}`);
 
         if (signal.entry) {
             this._paperEngine.updatePrice(signal.symbol, signal.entry);
@@ -495,14 +515,21 @@ class AutomationEngine {
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     async _loadPrefs() {
-        const prefs = await UserPreferences.findOne({});
+        const prefs = await UserPreferences.findOne({}).sort({ updatedAt: -1 });
         return prefs || {};
     }
 
-    async _getBalance(mode) {
+    async _getBalance(mode, prefs = null) {
         try {
             if (mode === 'paper') {
-                const pw = await PaperWallet.findOne({});
+                // Try to find wallet for the active user first, else use most recently updated
+                let pw = null;
+                if (prefs?.userId) {
+                    pw = await PaperWallet.findOne({ userId: prefs.userId });
+                }
+                if (!pw) {
+                    pw = await PaperWallet.findOne({}).sort({ updatedAt: -1 });
+                }
                 return pw?.available ?? null;
             }
             // For live, we'd query exchange — return null to skip balance check if not available

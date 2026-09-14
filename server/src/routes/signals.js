@@ -108,7 +108,10 @@ router.post('/analyze/:symbol', async (req, res) => {
             }
         }
 
-        const userPrefs = await UserPreferences.findOne({ userId: req.user.id }).lean() || {};
+        let userPrefs = await UserPreferences.findOne({ userId: req.user.id }).lean();
+        if (!userPrefs) {
+            userPrefs = await UserPreferences.findOne({}).sort({ updatedAt: -1 }).lean() || {};
+        }
         const PaperWallet = require('../models/PaperWallet');
         const paperWallet = await PaperWallet.findOne({ userId: req.user.id }).lean();
 

@@ -147,6 +147,7 @@ class GroqClient {
 
             for (const model of modelsToTry) {
                 try {
+                    console.log(`[Groq] 🤖 Prompting ${model} with ${keyName}...`);
                     const result = await this._callModel(model, systemPrompt, userPrompt, currentApiKey);
 
                     if (this.activeModel !== model) {
@@ -166,7 +167,9 @@ class GroqClient {
 
                     const status = err.response?.status;
                     const errCode = err.response?.data?.error?.code || '';
+                    const errMsg = err.response?.data?.error?.message || err.message || '';
                     const isRateLimit = status === 429 || errCode === 'rate_limit_exceeded' || err.message?.includes('429');
+                    const isBadKey = status === 401 || errCode === 'invalid_api_key' || errMsg.toLowerCase().includes('invalid api key') || errMsg.toLowerCase().includes('unauthorized');
 
                     if (isRateLimit) {
                         console.warn(`[Groq] ⚡ Rate limit (429) on ${keyName}. Adding 60s cooldown and switching to next key in pool...`);
@@ -175,8 +178,13 @@ class GroqClient {
                         break; // Try next key in pool
                     }
 
+                    if (isBadKey) {
+                        console.warn(`[Groq] ⚠️ Invalid API key on ${keyName} (${errMsg}). Adding 24h cooldown and switching to next key in pool...`);
+                        this._cooldowns.set(currentApiKey, Date.now() + 24 * 60 * 60 * 1000);
+                        break; // Try next key in pool
+                    }
+
                     console.error('[Groq] API error:', err.response?.data || err.message);
-                    const errMsg = err.response?.data?.error?.message || err.message;
                     if (err instanceof SyntaxError || err.message?.includes('JSON') || err.message?.includes('SyntaxError')) {
                         return { action: 'NO_TRADE', confidence: 0, reasoning: 'AI response parse error: ' + errMsg };
                     }
