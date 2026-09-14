@@ -62,7 +62,14 @@ class ExchangeService {
             return response.data;
         } catch (error) {
             const status = error.response?.status;
-            const msg = error.response?.data?.error?.message || error.message;
+            const errObj = error.response?.data?.error;
+            let msg = errObj?.message || errObj?.desc;
+            if (!msg && errObj?.code === 'ip_not_whitelisted_for_api_key') {
+                const clientIp = errObj?.context?.client_ip || '';
+                msg = `IP not whitelisted on Delta (current IP: ${clientIp}). Please add this IP to your Delta API key settings or disable IP restriction.`;
+            } else if (!msg) {
+                msg = errObj?.code || error.message;
+            }
             console.error(`Delta API ${status || 'ERR'} ${method} ${path}: ${msg}`);
             throw new Error(msg || 'Exchange API request failed');
         }

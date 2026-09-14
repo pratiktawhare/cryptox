@@ -217,7 +217,7 @@ class AutomationEngine {
         try {
             if (mode === 'paper') {
                 const result = await this._executePaper(signal, prefs, cfg);
-                positionId = result?._id;
+                positionId = result?._id || result?.position?._id || result?.order?._id;
             } else {
                 const result = await this._executeLive(signal, prefs);
                 positionId = result?._id || result?.orderId;
@@ -268,34 +268,50 @@ class AutomationEngine {
 
     async _executePaper(signal, prefs, cfg) {
         if (!this._paperEngine) throw new Error('PaperTradingEngine not connected');
-        return await this._paperEngine.openPosition({
-            symbol:      signal.symbol,
-            side:        signal.action === 'BUY' ? 'buy' : 'sell',
-            size:        signal.quantity,
-            entryPrice:  signal.entry,
-            leverage:    signal.leverage,
-            stopLoss:    signal.stopLoss,
-            takeProfit:  signal.target1,
-            takeProfit2: signal.target2,
-            source:      'automation',
-            signalId:    signal._id,
-        });
+
+        const PaperWallet = require('../../models/PaperWallet');
+        const User = require('../../models/User');
+        const pw = await PaperWallet.findOne({});
+        const user = await User.findOne({});
+        const userId = pw?.userId ? String(pw.userId) : (user?._id ? String(user._id) : 'default_user');
+
+        if (signal.entry) {
+            this._paperEngine.updatePrice(signal.symbol, signal.entry);
+        }
+
+        const res = await this._paperEngine.placeOrder(
+            userId,
+            {
+                symbol:      signal.symbol.toUpperCase(),
+                side:        signal.action === 'BUY' ? 'buy' : 'sell',
+                size:        signal.quantity,
+                orderType:   'market_order',
+                price:       signal.entry,
+                stopLoss:    signal.stopLoss,
+                takeProfit:  signal.target1,
+                leverage:    signal.leverage,
+                signalId:    signal._id,
+                source:      'automation',
+            },
+            this._io
+        );
+
+        return res?.position || res?.order || res;
     }
 
     // ─── Live execution ──────────────────────────────────────────────────────
 
     async _executeLive(signal, prefs) {
         if (!this._orderExecutor) throw new Error('OrderExecutor not connected');
-        // We need a userId — load from User model (single-user app)
         const User = require('../../models/User');
         const user = await User.findOne({});
         if (!user) throw new Error('No user found for live execution');
 
         return await this._orderExecutor.execute(user._id, {
-            symbol:     signal.symbol,
+            symbol:     signal.symbol.toUpperCase(),
             side:       signal.action === 'BUY' ? 'buy' : 'sell',
             size:       signal.quantity,
-            orderType:  'limit',
+            orderType:  'limit_order',
             price:      signal.entry,
             stopLoss:   signal.stopLoss,
             takeProfit: signal.target1,

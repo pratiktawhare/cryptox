@@ -97,7 +97,11 @@ class PaperTradingEngine {
      * @returns {object} { position, tradeHistory, wallet }
      */
     async placeOrder(userId, params, io = null) {
-        const currentPrice = this.getPrice(params.symbol);
+        let currentPrice = this.getPrice(params.symbol);
+        if (!currentPrice && params.price) {
+            currentPrice = parseFloat(params.price);
+            this.updatePrice(params.symbol, currentPrice);
+        }
         if (!currentPrice) {
             throw new Error(`No live price available for ${params.symbol}. Try again in a moment.`);
         }

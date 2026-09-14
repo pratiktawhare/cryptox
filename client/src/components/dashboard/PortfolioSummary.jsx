@@ -17,6 +17,7 @@ const PortfolioSummary = () => {
 
     const [loading, setLoading] = useState(true);
     const [noKey,   setNoKey]   = useState(false);
+    const [liveError, setLiveError] = useState(null);
 
     const fetchData = useCallback(async () => {
         try {
@@ -27,6 +28,7 @@ const PortfolioSummary = () => {
                 ]);
                 setPaperWallet(walletRes.data.wallet);
                 setPaperPositions(posRes.data.positions || []);
+                setLiveError(null);
             } else {
                 const [balRes, posRes] = await Promise.all([
                     api.get('/profile/portfolio/balances'),
@@ -35,6 +37,7 @@ const PortfolioSummary = () => {
                 setBalances(balRes.data.balances || []);
                 setPositions(posRes.data.positions || []);
                 setNoKey(!!(balRes.data.noKey || posRes.data.noKey));
+                setLiveError(balRes.data.error || posRes.data.error || null);
             }
         } catch (err) {
             console.warn('Portfolio fetch error:', err.message);
@@ -244,6 +247,15 @@ const PortfolioSummary = () => {
 
     return (
         <div className="space-y-3 md:space-y-5 animate-fade-in">
+            {liveError && (
+                <div className="flex items-start gap-2.5 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
+                    <span className="text-base leading-none">⚠️</span>
+                    <div>
+                        <p className="font-semibold text-amber-200">Exchange Connection Notice</p>
+                        <p className="text-amber-300/80 mt-0.5">{liveError}</p>
+                    </div>
+                </div>
+            )}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
                 {statCards.map(card => (
                     <div key={card.label} className="bg-crypto-card border border-crypto-border rounded-xl p-3 md:p-5 hover:border-crypto-primary/20 transition-colors">

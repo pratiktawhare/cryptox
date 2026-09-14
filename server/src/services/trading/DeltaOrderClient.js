@@ -69,7 +69,13 @@ class DeltaOrderClient {
         } catch (err) {
             if (err.response?.data) {
                 const deltaError = err.response.data.error || err.response.data;
-                const errMsg = deltaError.message || deltaError.desc || JSON.stringify(deltaError);
+                let errMsg = deltaError.message || deltaError.desc;
+                if (!errMsg && deltaError.code === 'ip_not_whitelisted_for_api_key') {
+                    const clientIp = deltaError.context?.client_ip || '';
+                    errMsg = `IP not whitelisted on Delta (current IP: ${clientIp}). Please add this IP to your Delta API key settings.`;
+                } else if (!errMsg) {
+                    errMsg = deltaError.code || JSON.stringify(deltaError);
+                }
                 throw new Error(`Delta Exchange: ${errMsg}`);
             }
             throw err;
