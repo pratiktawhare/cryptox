@@ -53,74 +53,149 @@ function isModelUnavailableError(err) {
 
 class GroqClient {
     constructor() {
-        this.apiKey       = config.groqApiKey;
-        this.mock         = !this.apiKey;
-        this.activeModel  = null; // cached once a working model is found
+        this.apiKey            = config.groqApiKey;
+        this.mock              = !this.apiKey;
+        this.activeModel       = null; // cached once a working model is found
+        this._currentKeyIndex  = 0;
+        this._lastRotationAt   = Date.now();
+        this._cooldowns        = new Map(); // keyString -> cooldown timestamp
 
         if (this.mock) {
-            console.warn('[Groq] ⚠️  GROQ_API_KEY not set — signals will be mocked');
+            console.warn('[Groq] ⚠️  GROQ_API_KEY not set — signals will be mocked unless user keys are added');
         } else {
-            console.log('[Groq] ✅ Client initialized — will probe models:', FREE_TIER_MODELS.join(', '));
+            console.log('[Groq] ✅ Client initialized — default model:', FREE_TIER_MODELS[0]);
         }
     }
 
+    _resolveKeyPool(customKeyInput) {
+        let keys = [];
+        let rotationIntervalMin = 15;
+
+        if (Array.isArray(customKeyInput)) {
+            keys = customKeyInput.map((k, i) => typeof k === 'string' ? { key: k, nickname: `Key #${i + 1}` } : k);
+        } else if (customKeyInput && typeof customKeyInput === 'object' && Array.isArray(customKeyInput.keys)) {
+            keys = customKeyInput.keys;
+            if (customKeyInput.rotationIntervalMin !== undefined) {
+                rotationIntervalMin = customKeyInput.rotationIntervalMin;
+            }
+        } else if (typeof customKeyInput === 'string' && customKeyInput.trim()) {
+            keys = [{ key: customKeyInput.trim(), nickname: 'Custom Key' }];
+        }
+
+        if (keys.length === 0 && this.apiKey) {
+            keys = [{ key: this.apiKey, nickname: 'System Default' }];
+        }
+
+        return { keys, rotationIntervalMin };
+    }
+
+    _rotateKeys(keys, rotationIntervalMin) {
+        if (!keys || keys.length <= 1) return keys;
+
+        const now = Date.now();
+        if (rotationIntervalMin > 0) {
+            const intervalMs = rotationIntervalMin * 60 * 1000;
+            if (now - this._lastRotationAt >= intervalMs) {
+                this._currentKeyIndex = (this._currentKeyIndex + 1) % keys.length;
+                this._lastRotationAt = now;
+                console.log(`[Groq] 🔄 Key rotation interval (${rotationIntervalMin}m) reached → switched to Key #${this._currentKeyIndex + 1} (${keys[this._currentKeyIndex].nickname})`);
+            }
+        } else if (rotationIntervalMin === 0) {
+            this._currentKeyIndex = (this._currentKeyIndex + 1) % keys.length;
+            this._lastRotationAt = now;
+        }
+
+        const ordered = [];
+        for (let i = 0; i < keys.length; i++) {
+            const idx = (this._currentKeyIndex + i) % keys.length;
+            ordered.push(keys[idx]);
+        }
+
+        return ordered.sort((a, b) => {
+            const aCd = (this._cooldowns.get(a.key) || 0) > now ? 1 : 0;
+            const bCd = (this._cooldowns.get(b.key) || 0) > now ? 1 : 0;
+            return aCd - bCd;
+        });
+    }
+
     /**
-     * Send a structured prompt to Groq with automatic model fallback.
+     * Send a structured prompt to Groq with automatic key rotation and 429 failover.
      * @param {string} systemPrompt
      * @param {string} userPrompt
-     * @param {string} [customApiKey]
+     * @param {string|object|Array} [customKeyInput]
      * @returns {object} parsed JSON signal response
      */
-    async call(systemPrompt, userPrompt, customApiKey = null) {
-        const keyToUse = customApiKey || this.apiKey;
-        if (!keyToUse) {
+    async call(systemPrompt, userPrompt, customKeyInput = null) {
+        const { keys, rotationIntervalMin } = this._resolveKeyPool(customKeyInput);
+        if (keys.length === 0) {
             return this._mockSignal();
         }
 
-        // Build the list to try: cached active model first, then the rest
+        const prioritizedKeys = this._rotateKeys(keys, rotationIntervalMin);
+
+        // Standard model list
         const modelsToTry = this.activeModel
             ? [this.activeModel, ...FREE_TIER_MODELS.filter(m => m !== this.activeModel)]
             : [...FREE_TIER_MODELS];
 
-        let lastError = null;
+        let lastRateLimitErr = null;
 
-        for (const model of modelsToTry) {
-            try {
-                const result = await this._callModel(model, systemPrompt, userPrompt, keyToUse);
+        for (let kIdx = 0; kIdx < prioritizedKeys.length; kIdx++) {
+            const keyObj = prioritizedKeys[kIdx];
+            const currentApiKey = keyObj.key;
+            const keyName = keyObj.nickname || `Key #${kIdx + 1}`;
 
-                // Cache this model if it's not already cached
-                if (this.activeModel !== model) {
-                    console.log(`[Groq] ✅ Active model set to: ${model}`);
-                    this.activeModel = model;
-                }
+            for (const model of modelsToTry) {
+                try {
+                    const result = await this._callModel(model, systemPrompt, userPrompt, currentApiKey);
 
-                return result;
-
-            } catch (err) {
-                if (isModelUnavailableError(err)) {
-                    console.warn(`[Groq] ⚠️  Model "${model}" is unavailable/deprecated — trying next fallback...`);
-                    // If this was our cached model, clear it so we probe from scratch next time
-                    if (this.activeModel === model) {
-                        this.activeModel = null;
+                    if (this.activeModel !== model) {
+                        console.log(`[Groq] ✅ Active model set to: ${model}`);
+                        this.activeModel = model;
                     }
-                    lastError = err;
-                    continue; // try next model
-                }
 
-                // Non-deprecation error (rate limit, network, JSON parse, etc.) — don't fallback
-                console.error('[Groq] API error:', err.response?.data || err.message);
-                const errMsg = err.response?.data?.error?.message || err.message;
-                if (err instanceof SyntaxError || err.message?.includes('JSON') || err.message?.includes('SyntaxError')) {
-                    return { action: 'NO_TRADE', confidence: 0, reasoning: 'AI response parse error: ' + errMsg };
+                    this._cooldowns.delete(currentApiKey);
+                    return result;
+
+                } catch (err) {
+                    if (isModelUnavailableError(err)) {
+                        console.warn(`[Groq] ⚠️ Model "${model}" is unavailable/deprecated — trying next fallback model...`);
+                        if (this.activeModel === model) this.activeModel = null;
+                        continue;
+                    }
+
+                    const status = err.response?.status;
+                    const errCode = err.response?.data?.error?.code || '';
+                    const isRateLimit = status === 429 || errCode === 'rate_limit_exceeded' || err.message?.includes('429');
+
+                    if (isRateLimit) {
+                        console.warn(`[Groq] ⚡ Rate limit (429) on ${keyName}. Adding 60s cooldown and switching to next key in pool...`);
+                        this._cooldowns.set(currentApiKey, Date.now() + 60_000);
+                        lastRateLimitErr = err;
+                        break; // Try next key in pool
+                    }
+
+                    console.error('[Groq] API error:', err.response?.data || err.message);
+                    const errMsg = err.response?.data?.error?.message || err.message;
+                    if (err instanceof SyntaxError || err.message?.includes('JSON') || err.message?.includes('SyntaxError')) {
+                        return { action: 'NO_TRADE', confidence: 0, reasoning: 'AI response parse error: ' + errMsg };
+                    }
+                    return { action: 'NO_TRADE', confidence: 0, reasoning: 'AI API error: ' + errMsg };
                 }
-                return { action: 'NO_TRADE', confidence: 0, reasoning: 'AI API error: ' + errMsg };
             }
         }
 
-        // All models exhausted
-        console.error('[Groq] ❌ All models in fallback chain are unavailable.');
-        const errMsg = lastError?.response?.data?.error?.message || lastError?.message || 'All models unavailable';
-        return { action: 'NO_TRADE', confidence: 0, reasoning: 'AI unavailable (all models deprecated): ' + errMsg };
+        if (lastRateLimitErr) {
+            console.error(`[Groq] ❌ All ${prioritizedKeys.length} keys in pool exceeded rate limit.`);
+            return {
+                action: 'NO_TRADE',
+                confidence: 0,
+                reasoning: `All ${prioritizedKeys.length} Groq API keys rate limited. Will retry next cycle.`
+            };
+        }
+
+        console.error('[Groq] ❌ All models or keys exhausted.');
+        return { action: 'NO_TRADE', confidence: 0, reasoning: 'All AI models/keys unavailable' };
     }
 
     /**

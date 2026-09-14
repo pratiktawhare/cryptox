@@ -28,12 +28,14 @@ router.get('/status', async (req, res) => {
 
         res.json({
             paper: {
-                running:  status.paper,
-                config:   prefs?.paperAuto || {},
+                running:     typeof status.paper === 'object' ? !!status.paper.running : !!status.paper,
+                nextCycleAt: typeof status.paper === 'object' ? status.paper.nextCycleAt : (prefs?.paperAuto?.nextCycleAt || null),
+                config:      prefs?.paperAuto || {},
             },
             live: {
-                running:  status.live,
-                config:   prefs?.liveAuto || {},
+                running:     typeof status.live === 'object' ? !!status.live.running : !!status.live,
+                nextCycleAt: typeof status.live === 'object' ? status.live.nextCycleAt : (prefs?.liveAuto?.nextCycleAt || null),
+                config:      prefs?.liveAuto || {},
             },
         });
     } catch (err) {

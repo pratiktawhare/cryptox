@@ -50,6 +50,16 @@ const preferencesSchema = new mongoose.Schema({
     useCustomGroqKey:       { type: Boolean, default: true },
     useCustomDeepseekKey:   { type: Boolean, default: true },
 
+    // Groq Multi-Key Pool & Model Rotation
+    groqKeys: [{
+        keyEncrypted:       { type: String, required: true },
+        nickname:           { type: String, default: 'Groq Key' },
+        createdAt:          { type: Date,   default: Date.now },
+        lastUsedAt:         { type: Date,   default: null },
+        isActive:           { type: Boolean, default: true }
+    }],
+    groqRotationIntervalMin:{ type: Number, default: 15, enum: [0, 15, 30, 60] }, // 0 = every call (round-robin), 15 = 15m, 30 = 30m
+
     // ── Paper Trading Automation (completely independent of live) ─────────────
     paperAuto: {
         enabled:             { type: Boolean, default: false },

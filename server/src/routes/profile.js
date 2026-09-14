@@ -3,7 +3,7 @@ const ApiKey = require('../models/ApiKey');
 const User = require('../models/User');
 const UserPreferences = require('../models/UserPreferences');
 const ExchangeService = require('../services/exchangeService');
-const { encryptData } = require('../utils/encryption');
+const { encryptData, decryptData } = require('../utils/encryption');
 const authMiddleware = require('../middleware/auth');
 
 const router = express.Router();
@@ -137,27 +137,63 @@ router.patch('/mode', async (req, res) => {
 // ═══ User Preferences (including AI Model Configuration) ═══
 
 // Get user preferences
+function maskEncryptedKey(encrypted) {
+    try {
+        const raw = decryptData(encrypted);
+        if (!raw || raw.length < 8) return '••••••••';
+        return `${raw.substring(0, 4)}••••${raw.slice(-4)}`;
+    } catch (e) {
+        return '••••••••';
+    }
+}
+
+function sanitizePrefs(prefs) {
+    const prefsJson = prefs.toJSON ? prefs.toJSON() : { ...prefs };
+    const hasGroqKey = !!prefsJson.groqApiKeyEncrypted || (prefsJson.groqKeys && prefsJson.groqKeys.length > 0);
+    const hasDeepseekKey = !!prefsJson.deepseekApiKeyEncrypted;
+
+    delete prefsJson.groqApiKeyEncrypted;
+    delete prefsJson.deepseekApiKeyEncrypted;
+
+    if (Array.isArray(prefsJson.groqKeys)) {
+        prefsJson.groqKeys = prefsJson.groqKeys.map(k => ({
+            _id: k._id,
+            nickname: k.nickname || 'Groq Key',
+            maskedKey: maskEncryptedKey(k.keyEncrypted),
+            createdAt: k.createdAt,
+            lastUsedAt: k.lastUsedAt,
+            isActive: k.isActive !== false,
+        }));
+    } else {
+        prefsJson.groqKeys = [];
+    }
+
+    return {
+        ...prefsJson,
+        hasGroqKey,
+        hasDeepseekKey
+    };
+}
+
 router.get('/preferences', async (req, res) => {
     try {
-        let prefs = await UserPreferences.findOne({ userId: req.user.id });
+        let prefs = await UserPreferences.findOne({ userId: req.user.id }) || await UserPreferences.findOne({});
         if (!prefs) {
             prefs = await UserPreferences.create({ userId: req.user.id });
         }
-        
-        const prefsJson = prefs.toJSON();
-        const hasGroqKey = !!prefsJson.groqApiKeyEncrypted;
-        const hasDeepseekKey = !!prefsJson.deepseekApiKeyEncrypted;
-        
-        delete prefsJson.groqApiKeyEncrypted;
-        delete prefsJson.deepseekApiKeyEncrypted;
-        
-        res.json({
-            preferences: {
-                ...prefsJson,
-                hasGroqKey,
-                hasDeepseekKey
-            }
-        });
+
+        // Auto-migrate legacy groqApiKeyEncrypted if groqKeys is empty
+        if (prefs.groqApiKeyEncrypted && (!prefs.groqKeys || prefs.groqKeys.length === 0)) {
+            prefs.groqKeys = [{
+                keyEncrypted: prefs.groqApiKeyEncrypted,
+                nickname: 'Primary Key',
+                createdAt: new Date(),
+                isActive: true
+            }];
+            await prefs.save();
+        }
+
+        res.json({ preferences: sanitizePrefs(prefs) });
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch preferences' });
     }
@@ -166,9 +202,9 @@ router.get('/preferences', async (req, res) => {
 // Update user preferences
 router.patch('/preferences', async (req, res) => {
     try {
-        const { aiProvider, groqApiKey, deepseekApiKey, useCustomGroqKey, useCustomDeepseekKey, riskTolerance, maxLeverage } = req.body;
+        const { aiProvider, groqApiKey, deepseekApiKey, useCustomGroqKey, useCustomDeepseekKey, riskTolerance, maxLeverage, groqRotationIntervalMin } = req.body;
         
-        let prefs = await UserPreferences.findOne({ userId: req.user.id });
+        let prefs = await UserPreferences.findOne({ userId: req.user.id }) || await UserPreferences.findOne({});
         if (!prefs) {
             prefs = await UserPreferences.create({ userId: req.user.id });
         }
@@ -211,26 +247,171 @@ router.patch('/preferences', async (req, res) => {
         if (maxLeverage !== undefined) {
             prefs.maxLeverage = maxLeverage;
         }
+
+        if (groqRotationIntervalMin !== undefined) {
+            prefs.groqRotationIntervalMin = parseInt(groqRotationIntervalMin);
+        }
         
         await prefs.save();
         
-        const prefsJson = prefs.toJSON();
-        const hasGroqKey = !!prefsJson.groqApiKeyEncrypted;
-        const hasDeepseekKey = !!prefsJson.deepseekApiKeyEncrypted;
-        
-        delete prefsJson.groqApiKeyEncrypted;
-        delete prefsJson.deepseekApiKeyEncrypted;
-        
         res.json({
             message: 'Preferences updated successfully',
-            preferences: {
-                ...prefsJson,
-                hasGroqKey,
-                hasDeepseekKey
-            }
+            preferences: sanitizePrefs(prefs)
         });
     } catch (error) {
         res.status(500).json({ error: 'Failed to update preferences: ' + error.message });
+    }
+});
+
+// ═══ Groq Multi-Key Pool ═══
+
+// GET /api/profile/groq-keys
+router.get('/groq-keys', async (req, res) => {
+    try {
+        let prefs = await UserPreferences.findOne({ userId: req.user.id }) || await UserPreferences.findOne({});
+        if (!prefs) prefs = await UserPreferences.create({ userId: req.user.id });
+
+        const keys = (prefs.groqKeys || []).map(k => ({
+            _id: k._id,
+            nickname: k.nickname || 'Groq Key',
+            maskedKey: maskEncryptedKey(k.keyEncrypted),
+            createdAt: k.createdAt,
+            lastUsedAt: k.lastUsedAt,
+            isActive: k.isActive !== false,
+        }));
+
+        res.json({
+            keys,
+            rotationIntervalMin: prefs.groqRotationIntervalMin !== undefined ? prefs.groqRotationIntervalMin : 15
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch Groq keys: ' + err.message });
+    }
+});
+
+// POST /api/profile/groq-keys — add new key
+router.post('/groq-keys', async (req, res) => {
+    try {
+        const { apiKey, nickname } = req.body;
+        if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 8) {
+            return res.status(400).json({ error: 'Valid Groq API key is required' });
+        }
+
+        let prefs = await UserPreferences.findOne({ userId: req.user.id }) || await UserPreferences.findOne({});
+        if (!prefs) prefs = await UserPreferences.create({ userId: req.user.id });
+
+        const trimmedKey = apiKey.trim();
+        const encrypted = encryptData(trimmedKey);
+
+        const newKey = {
+            keyEncrypted: encrypted,
+            nickname: (nickname && nickname.trim()) ? nickname.trim() : `Groq Key #${(prefs.groqKeys?.length || 0) + 1}`,
+            createdAt: new Date(),
+            isActive: true
+        };
+
+        if (!Array.isArray(prefs.groqKeys)) prefs.groqKeys = [];
+        prefs.groqKeys.push(newKey);
+        await prefs.save();
+
+        const formattedKeys = prefs.groqKeys.map(k => ({
+            _id: k._id,
+            nickname: k.nickname,
+            maskedKey: maskEncryptedKey(k.keyEncrypted),
+            createdAt: k.createdAt,
+            lastUsedAt: k.lastUsedAt,
+            isActive: k.isActive !== false,
+        }));
+
+        res.status(201).json({
+            message: 'Groq API key added successfully',
+            keys: formattedKeys,
+            rotationIntervalMin: prefs.groqRotationIntervalMin !== undefined ? prefs.groqRotationIntervalMin : 15
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to add Groq key: ' + err.message });
+    }
+});
+
+// DELETE /api/profile/groq-keys/:id — delete a key
+router.delete('/groq-keys/:id', async (req, res) => {
+    try {
+        let prefs = await UserPreferences.findOne({ userId: req.user.id }) || await UserPreferences.findOne({});
+        if (!prefs) return res.status(404).json({ error: 'Preferences not found' });
+
+        const keyId = req.params.id;
+        prefs.groqKeys = (prefs.groqKeys || []).filter(k => String(k._id) !== String(keyId));
+        await prefs.save();
+
+        const formattedKeys = prefs.groqKeys.map(k => ({
+            _id: k._id,
+            nickname: k.nickname,
+            maskedKey: maskEncryptedKey(k.keyEncrypted),
+            createdAt: k.createdAt,
+            lastUsedAt: k.lastUsedAt,
+            isActive: k.isActive !== false,
+        }));
+
+        res.json({
+            message: 'Groq API key removed',
+            keys: formattedKeys,
+            rotationIntervalMin: prefs.groqRotationIntervalMin !== undefined ? prefs.groqRotationIntervalMin : 15
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to delete Groq key: ' + err.message });
+    }
+});
+
+// PATCH /api/profile/groq-keys/:id/toggle — toggle active
+router.patch('/groq-keys/:id/toggle', async (req, res) => {
+    try {
+        let prefs = await UserPreferences.findOne({ userId: req.user.id }) || await UserPreferences.findOne({});
+        if (!prefs) return res.status(404).json({ error: 'Preferences not found' });
+
+        const key = (prefs.groqKeys || []).find(k => String(k._id) === String(req.params.id));
+        if (!key) return res.status(404).json({ error: 'Key not found' });
+
+        key.isActive = !key.isActive;
+        await prefs.save();
+
+        const formattedKeys = prefs.groqKeys.map(k => ({
+            _id: k._id,
+            nickname: k.nickname,
+            maskedKey: maskEncryptedKey(k.keyEncrypted),
+            createdAt: k.createdAt,
+            lastUsedAt: k.lastUsedAt,
+            isActive: k.isActive !== false,
+        }));
+
+        res.json({
+            message: `Key ${key.isActive ? 'activated' : 'paused'}`,
+            keys: formattedKeys,
+            rotationIntervalMin: prefs.groqRotationIntervalMin !== undefined ? prefs.groqRotationIntervalMin : 15
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to toggle key: ' + err.message });
+    }
+});
+
+// PATCH /api/profile/groq-rotation — update rotation interval
+router.patch('/groq-rotation', async (req, res) => {
+    try {
+        const { intervalMin } = req.body;
+        let prefs = await UserPreferences.findOne({ userId: req.user.id }) || await UserPreferences.findOne({});
+        if (!prefs) prefs = await UserPreferences.create({ userId: req.user.id });
+
+        const interval = parseInt(intervalMin);
+        if ([0, 15, 30, 60].includes(interval)) {
+            prefs.groqRotationIntervalMin = interval;
+            await prefs.save();
+        }
+
+        res.json({
+            message: 'Rotation interval updated',
+            rotationIntervalMin: prefs.groqRotationIntervalMin
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update rotation: ' + err.message });
     }
 });
 

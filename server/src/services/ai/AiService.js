@@ -21,10 +21,36 @@ class AiService {
     async call(userPrefs, systemPrompt, userPrompt) {
         const provider = userPrefs?.aiProvider || 'groq';
         let customApiKey = null;
+        let groqPoolOptions = null;
 
         try {
-            if (provider === 'groq' && userPrefs?.useCustomGroqKey !== false && userPrefs?.groqApiKeyEncrypted) {
-                customApiKey = decryptData(userPrefs.groqApiKeyEncrypted);
+            if (provider === 'groq' && userPrefs?.useCustomGroqKey !== false) {
+                const keys = [];
+                // 1. Check multi-key pool
+                if (Array.isArray(userPrefs?.groqKeys) && userPrefs.groqKeys.length > 0) {
+                    for (const k of userPrefs.groqKeys) {
+                        if (k.isActive !== false && k.keyEncrypted) {
+                            try {
+                                const dec = decryptData(k.keyEncrypted);
+                                if (dec) keys.push({ key: dec, nickname: k.nickname || 'Groq Key' });
+                            } catch (e) {
+                                console.error('[AiService] Failed to decrypt a key in pool:', e.message);
+                            }
+                        }
+                    }
+                }
+                // 2. Legacy fallback if pool was empty
+                if (keys.length === 0 && userPrefs?.groqApiKeyEncrypted) {
+                    try {
+                        const dec = decryptData(userPrefs.groqApiKeyEncrypted);
+                        if (dec) keys.push({ key: dec, nickname: 'Primary Key' });
+                    } catch (e) {}
+                }
+
+                groqPoolOptions = {
+                    keys,
+                    rotationIntervalMin: userPrefs?.groqRotationIntervalMin !== undefined ? userPrefs.groqRotationIntervalMin : 15
+                };
             } else if (provider === 'deepseek' && userPrefs?.useCustomDeepseekKey !== false && userPrefs?.deepseekApiKeyEncrypted) {
                 customApiKey = decryptData(userPrefs.deepseekApiKeyEncrypted);
             }
@@ -36,7 +62,7 @@ class AiService {
         if (provider === 'deepseek') {
             signal = await deepseekClient.call(systemPrompt, userPrompt, customApiKey);
         } else {
-            signal = await groqClient.call(systemPrompt, userPrompt, customApiKey);
+            signal = await groqClient.call(systemPrompt, userPrompt, groqPoolOptions);
         }
 
         // Post-process precision and mathematical accuracy

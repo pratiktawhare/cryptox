@@ -4,6 +4,7 @@ import { io } from 'socket.io-client';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { useTradingMode } from '../context/TradingModeContext';
 import ThemeToggle from '../components/layout/ThemeToggle';
 import TradingModeToggle from '../components/layout/TradingModeToggle';
 import MobileBottomNav from '../components/layout/MobileBottomNav';
@@ -59,11 +60,12 @@ const Dashboard = () => {
     const [searchParams] = useSearchParams();
     const { user, logout } = useAuth();
     const { theme } = useTheme();
+    const { isPaper } = useTradingMode();
     const [activeTab, setActiveTab] = useState('portfolio');
     const [livePrices, setLivePrices] = useState({});
     const [socketInstance, setSocketInstance] = useState(null);
     const [wsConnected, setWsConnected] = useState(false);
-    const [autoStatus, setAutoStatus] = useState({ paper: false, live: false });
+    const [autoStatus, setAutoStatus] = useState({ paper: false, live: false, paperNextAt: null, liveNextAt: null });
 
     // Read ?coin= from URL (navigated from Markets page)
     const urlCoin = searchParams.get('coin');
@@ -98,9 +100,22 @@ const Dashboard = () => {
             setLivePrices((prev) => ({ ...prev, ...batch }));
         });
 
-        // Listen for automation cycles (updates the indicator)
+        // Listen for automation events
         socket.on('automation_cycle', (data) => {
-            setAutoStatus(prev => ({ ...prev, [data.mode]: true }));
+            setAutoStatus(prev => ({
+                ...prev,
+                [data.mode]: true,
+                [`${data.mode}NextAt`]: Date.now() + 30 * 60 * 1000
+            }));
+        });
+
+        socket.on('automation_status', (data) => {
+            setAutoStatus({
+                paper: !!data.paper?.running,
+                live:  !!data.live?.running,
+                paperNextAt: data.paper?.nextCycleAt || null,
+                liveNextAt:  data.live?.nextCycleAt  || null,
+            });
         });
 
         return () => socket.disconnect();
@@ -109,9 +124,45 @@ const Dashboard = () => {
     // Fetch automation status on mount
     useEffect(() => {
         api.get('/automation/status')
-            .then(r => setAutoStatus({ paper: r.data.paper?.running || false, live: r.data.live?.running || false }))
+            .then(r => setAutoStatus({
+                paper: !!r.data.paper?.running,
+                live:  !!r.data.live?.running,
+                paperNextAt: r.data.paper?.nextCycleAt || null,
+                liveNextAt:  r.data.live?.nextCycleAt  || null,
+            }))
             .catch(() => {});
     }, []);
+
+    // Second-by-second countdown for next automated trade call
+    const [secondsLeft, setSecondsLeft] = useState(null);
+    const targetNextAt = isPaper ? autoStatus.paperNextAt : autoStatus.liveNextAt;
+    const isAutoRunning = isPaper ? autoStatus.paper : autoStatus.live;
+
+    useEffect(() => {
+        if (!isAutoRunning || !targetNextAt) {
+            setSecondsLeft(null);
+            return;
+        }
+
+        const tick = () => {
+            const diff = Math.max(0, Math.floor((new Date(targetNextAt).getTime() - Date.now()) / 1000));
+            setSecondsLeft(diff);
+        };
+
+        tick();
+        const iv = setInterval(tick, 1000);
+        return () => clearInterval(iv);
+    }, [isAutoRunning, targetNextAt]);
+
+    const formatCountdown = (totalSec) => {
+        if (totalSec === null || totalSec === undefined) return null;
+        if (totalSec <= 0) return 'Scanning market…';
+        const m = Math.floor(totalSec / 60);
+        const s = totalSec % 60;
+        return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    };
+
+    const countdownText = formatCountdown(secondsLeft);
 
     // Sorted tickers (show only coins that have live prices)
     const tickers = useMemo(() => Object.values(livePrices), [livePrices]);
@@ -212,15 +263,21 @@ const Dashboard = () => {
                             <TradingModeToggle />
                         </div>
 
-                        {/* Automation status pill */}
+                        {/* Automation status pill with second-by-second countdown */}
                         {(autoStatus.paper || autoStatus.live) && (
                             <button
                                 onClick={() => setActiveTab('settings')}
-                                title="AI Automation is running — click to manage"
-                                className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold cursor-pointer hover:bg-emerald-500/20 transition-all"
+                                title="AI Automation is active — click to open Settings"
+                                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-[11px] font-bold cursor-pointer hover:bg-emerald-500/20 transition-all font-mono shadow-sm"
                             >
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                                Auto {[autoStatus.paper && 'Paper', autoStatus.live && 'Live'].filter(Boolean).join('+')}
+                                <span>Auto {[autoStatus.paper && 'Paper', autoStatus.live && 'Live'].filter(Boolean).join('+')}</span>
+                                {countdownText && (
+                                    <>
+                                        <span className="text-emerald-500/40">|</span>
+                                        <span className="text-emerald-300 font-bold tabular-nums">⏱ {countdownText}</span>
+                                    </>
+                                )}
                             </button>
                         )}
 
@@ -277,6 +334,39 @@ const Dashboard = () => {
 
             {/* ── Content ── */}
             <main className="max-w-[1440px] mx-auto px-4 md:px-6 py-3 md:py-6 pb-24 md:pb-6">
+                {/* Active Automation Banner with continuous second-by-second countdown */}
+                {isAutoRunning && activeTab === 'portfolio' && (
+                    <div className="mb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent border border-emerald-500/20 animate-fade-in shadow-sm">
+                        <div className="flex items-center gap-2.5">
+                            <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs font-bold text-crypto-heading">AI Trade Automation Active</span>
+                                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                        {isPaper ? 'Paper Mode' : 'Live Mode'}
+                                    </span>
+                                </div>
+                                <p className="text-[11px] text-crypto-muted mt-0.5">
+                                    Automated 30-min market scans with multi-key Groq account rotation
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 self-end sm:self-auto font-mono">
+                            <span className="text-crypto-muted text-xs">Next trade scan in:</span>
+                            <span className="px-2.5 py-1 rounded-lg bg-crypto-card border border-emerald-500/30 text-emerald-300 text-xs font-bold tabular-nums tracking-wider shadow-sm">
+                                ⏱ {countdownText || 'Scanning soon…'}
+                            </span>
+                            <button
+                                onClick={() => setActiveTab('settings')}
+                                className="text-xs text-crypto-primary hover:underline ml-1 cursor-pointer font-sans"
+                            >
+                                Settings →
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 {/* Portfolio tab */}
                 {activeTab === 'portfolio' && <PortfolioSummary />}
 

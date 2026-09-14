@@ -34,6 +34,7 @@ class AutomationEngine {
         this._trailTimer    = null;
         this._reportTimer   = null;
         this._running       = { paper: false, live: false };
+        this._nextCycleAt   = { paper: null, live: null };
         this._io            = null;
         this._signalEngine  = null;
         this._paperEngine   = null;
@@ -77,7 +78,10 @@ class AutomationEngine {
 
         this._running[mode] = true;
         const intervalMin = cfg?.intervalMinutes || 30;
+        this._nextCycleAt[mode] = Date.now() + intervalMin * 60 * 1000;
         console.log(`[AutomationEngine] ▶ Starting ${mode} automation (every ${intervalMin}m)`);
+
+        this._emit('automation_status', this.getStatus());
 
         // Run first cycle immediately, then schedule
         this._runCycle(mode).catch(e => console.error(`[AutomationEngine] First cycle error:`, e.message));
@@ -93,6 +97,8 @@ class AutomationEngine {
             this[`_${mode}Timer`] = null;
         }
         this._running[mode] = false;
+        this._nextCycleAt[mode] = null;
+        this._emit('automation_status', this.getStatus());
         console.log(`[AutomationEngine] ⏹ Stopped ${mode} automation`);
     }
 
@@ -104,8 +110,14 @@ class AutomationEngine {
 
     getStatus() {
         return {
-            paper: this._running.paper,
-            live:  this._running.live,
+            paper: {
+                running: !!this._running.paper,
+                nextCycleAt: this._running.paper ? this._nextCycleAt?.paper : null,
+            },
+            live: {
+                running: !!this._running.live,
+                nextCycleAt: this._running.live ? this._nextCycleAt?.live : null,
+            },
         };
     }
 
@@ -120,6 +132,11 @@ class AutomationEngine {
         const prefs = await this._loadPrefs();
         const cfg   = prefs?.[`${mode}Auto`] || {};
         const date  = istDateStr();
+
+        const intervalMin = cfg?.intervalMinutes || 30;
+        this._nextCycleAt[mode] = Date.now() + intervalMin * 60 * 1000;
+        UserPreferences.updateMany({}, { $set: { [`${mode}Auto.nextCycleAt`]: new Date(this._nextCycleAt[mode]) } }).catch(() => {});
+        this._emit('automation_status', this.getStatus());
 
         // ── Balance check ────────────────────────────────────────────────────
         const walletBalance = await this._getBalance(mode);
