@@ -32,9 +32,10 @@ const notificationService = require('../NotificationService');
 const CYCLE_INTERVAL_MS   = 5 * 60 * 1000;  // 5 minutes per cycle
 const COINS_PER_CYCLE     = 20;              // Coins scanned per cycle
 const GEMINI_CALL_DELAY   = 4000;            // 4s between Gemini calls → max ~15 RPM
-const MIN_BIAS_SCORE      = 0.10;            // Minimum bias score to call Gemini
+const MIN_BIAS_SCORE      = 0.20;            // Minimum bias score to call AI (balanced — filters noise but not good setups)
 const MIN_SIGNAL_GAP_MS   = 15 * 60 * 1000; // 15 min gap between signals per coin
-const MIN_CONFIDENCE      = 55;              // Minimum confidence to emit signal
+const MIN_CONFIDENCE      = 65;              // Minimum confidence to emit signal (balanced)
+const MIN_RR              = 1.5;             // Minimum R/R ratio gate before saving signal
 
 class SignalEngine {
     constructor() {
@@ -228,9 +229,12 @@ class SignalEngine {
             }
             signal.leverage = sigLeverage;
 
+            // Step 7: R/R validation gate — reject if math doesn't meet minimum
+            if (!this._validateSignalRR(signal, symbol)) return true;
+
             await this._saveSignal(signal, mtf, primary, walletContext);
             this._lastSignalTime.set(symbol, Date.now());
-            return true; // Gemini was called
+            return true; // AI was called
 
         } catch (err) {
             this._stats.errors++;
@@ -241,6 +245,32 @@ class SignalEngine {
         return false;
     }
 
+
+    // ─── R/R Validation Gate ───────────────────────────────────────────────────
+
+    /**
+     * Validates that the signal's R/R meets the minimum threshold.
+     * Rejects the signal and logs a warning if it doesn't.
+     * @returns {boolean} true = valid (save it), false = reject (discard)
+     */
+    _validateSignalRR(signal, symbol) {
+        if (!signal.entry || !signal.stopLoss || !signal.target1) {
+            console.log(`[SignalEngine] ⚠️  ${symbol} — Missing entry/SL/TP, cannot validate R/R. Rejecting.`);
+            return false;
+        }
+        const risk   = Math.abs(signal.entry - signal.stopLoss);
+        const reward = Math.abs(signal.target1 - signal.entry);
+        if (risk === 0) {
+            console.log(`[SignalEngine] ⚠️  ${symbol} — Zero risk (entry === stopLoss). Rejecting.`);
+            return false;
+        }
+        const rr = reward / risk;
+        if (rr < MIN_RR) {
+            console.log(`[SignalEngine] ❌ ${symbol} — R/R ${rr.toFixed(2)} < ${MIN_RR} minimum. Rejected.`);
+            return false;
+        }
+        return true;
+    }
 
     // ─── Signal persistence ────────────────────────────────────────────────────
 
@@ -505,52 +535,119 @@ class SignalEngine {
             };
         }
 
-        const mtf = await MarketAnalyzer.analyzeMultiTimeframe(symbol);
-        const primary = mtf['5m'] || mtf['15m'];
-        if (!primary || primary.error) throw new Error('Analysis failed: ' + (primary?.error || 'no data'));
+        // ── Specific symbol: analyse, then auto-retry up to 2 alternative coins on NO_TRADE ──
 
-        let learningCtx = null;
-        try {
-            const [symCtx, globalCtx] = await Promise.all([
-                selfLearning.getContext(symbol),
-                selfLearning.getGlobalContext(),
-            ]);
-            learningCtx = selfLearning.formatForPrompt(symCtx, globalCtx);
-        } catch (_) { /* skip */ }
+        const MAX_RETRIES = 2;
+        const trySymbols  = [symbol];
 
-        const prefsWithBudget = { ...userPrefs, ...walletContext };
-        const userPrompt = buildUserPrompt(mtf, prefsWithBudget, learningCtx);
-        const signal = await GeminiClient.call(userPrefs, SYSTEM_PROMPT, userPrompt);
-
-        if (!signal || signal.action === 'NO_TRADE' || signal.confidence < MIN_CONFIDENCE) {
-            const confidence = signal?.confidence || 0;
-            const reasoning = signal?.reasoning || (signal && signal.confidence < MIN_CONFIDENCE 
-                ? `Confidence (${signal.confidence}%) is below minimum threshold of ${MIN_CONFIDENCE}%.` 
-                : 'No trade setup');
-            return { action: 'NO_TRADE', confidence, reasoning, mtf };
+        // Pick alternative coins from catalog in similar price range
+        if (this.catalog?.isReady) {
+            const allSyms = this.catalog.getSymbols().filter(s => s !== symbol);
+            const refPrice = this.wsManager?.getPrice?.(symbol);
+            let pool = allSyms;
+            if (refPrice) {
+                const sameTier = allSyms.filter(s => {
+                    const p = this.wsManager?.getPrice?.(s);
+                    return p && p >= refPrice / 100 && p <= refPrice * 100;
+                });
+                if (sameTier.length >= MAX_RETRIES) pool = sameTier;
+            }
+            const shuffled = [...pool].sort(() => Math.random() - 0.5);
+            trySymbols.push(...shuffled.slice(0, MAX_RETRIES));
         }
 
-        const currentPrice = primary.price;
-        const entry = signal.entry || currentPrice;
-        const leverage = userPrefs.maxLeverage || 10;
-        const tradeBudget = walletContext.tradeBudget ?? 10000;
-        const sigLeverage = Math.min(signal.leverage || leverage, leverage);
-        if (!signal.quantity && entry) {
-            const marginPerContract = entry / sigLeverage;
-            signal.quantity = Math.max(1, Math.floor(tradeBudget / marginPerContract));
-        }
-        if (signal.quantity && entry) {
-            const marginNeeded = (signal.quantity * entry) / sigLeverage;
-            if (marginNeeded > tradeBudget * 1.1) {
-                signal.quantity = Math.max(1, Math.floor((tradeBudget * sigLeverage) / entry));
+        let lastNoTrade = null;
+
+        for (let attempt = 0; attempt < trySymbols.length; attempt++) {
+            const trySym = trySymbols[attempt];
+            const isRetry = attempt > 0;
+
+            if (isRetry) {
+                console.log(`[On-Demand] 🔄 Retry ${attempt}/${MAX_RETRIES} → ${trySym} (NO_TRADE on ${trySymbols[attempt - 1]})`);
+            }
+
+            try {
+                const mtf = await MarketAnalyzer.analyzeMultiTimeframe(trySym);
+                const primary = mtf['5m'] || mtf['15m'];
+                if (!primary || primary.error) {
+                    if (!isRetry) throw new Error('Analysis failed: ' + (primary?.error || 'no data'));
+                    continue;
+                }
+
+                // Skip illiquid coins on retries
+                if (isRetry && !(primary.volumeContext?.isLiquid ?? true)) continue;
+
+                let learningCtx = null;
+                try {
+                    const [symCtx, globalCtx] = await Promise.all([
+                        selfLearning.getContext(trySym),
+                        selfLearning.getGlobalContext(),
+                    ]);
+                    learningCtx = selfLearning.formatForPrompt(symCtx, globalCtx);
+                } catch (_) {}
+
+                const prefsWithBudget = { ...userPrefs, ...walletContext };
+                const userPrompt = buildUserPrompt(mtf, prefsWithBudget, learningCtx);
+                const signal = await GeminiClient.call(userPrefs, SYSTEM_PROMPT, userPrompt);
+
+                if (!signal || signal.action === 'NO_TRADE' || signal.confidence < MIN_CONFIDENCE) {
+                    const confidence = signal?.confidence || 0;
+                    const reasoning  = signal?.reasoning
+                        || (signal && signal.confidence < MIN_CONFIDENCE
+                            ? `Confidence (${signal.confidence}%) below threshold of ${MIN_CONFIDENCE}%.`
+                            : 'No trade setup');
+                    lastNoTrade = { action: 'NO_TRADE', confidence, reasoning, mtf };
+                    console.log(`[On-Demand] ⬜ ${trySym} → NO_TRADE (conf: ${confidence}%)${isRetry ? ' [retry]' : ''}`);
+                    continue;
+                }
+
+                const currentPrice = primary.price;
+                const entry        = signal.entry || currentPrice;
+                const leverage     = userPrefs.maxLeverage || 10;
+                const tradeBudget  = walletContext.tradeBudget ?? 10000;
+                const sigLeverage  = Math.min(signal.leverage || leverage, leverage);
+                if (!signal.quantity && entry) {
+                    const marginPerContract = entry / sigLeverage;
+                    signal.quantity = Math.max(1, Math.floor(tradeBudget / marginPerContract));
+                }
+                if (signal.quantity && entry) {
+                    const marginNeeded = (signal.quantity * entry) / sigLeverage;
+                    if (marginNeeded > tradeBudget * 1.1) {
+                        signal.quantity = Math.max(1, Math.floor((tradeBudget * sigLeverage) / entry));
+                    }
+                }
+                signal.leverage = sigLeverage;
+
+                if (!this._validateSignalRR(signal, trySym)) {
+                    lastNoTrade = { action: 'NO_TRADE', confidence: signal.confidence,
+                        reasoning: `R/R below minimum ${MIN_RR}× on ${trySym}.`, mtf };
+                    console.log(`[On-Demand] ❌ ${trySym} → R/R too low${isRetry ? ' [retry]' : ''}`);
+                    continue;
+                }
+
+                const saved = await this._saveSignal(signal, mtf, primary, walletContext);
+                this._lastSignalTime.set(trySym, Date.now());
+
+                if (isRetry) {
+                    console.log(`[On-Demand] ✅ Signal found on retry: ${trySym} (requested: ${symbol})`);
+                    signal.retryNote = `No setup on ${symbol.replace('USD','/USD')} — signal found on ${trySym.replace('USD','/USD')} instead.`;
+                }
+
+                return { signal, saved, mtf, avgVolumeUsdt: primary?.volumeContext?.avgVolumeUsdt || null };
+
+            } catch (err) {
+                if (!isRetry) throw err;
+                console.error(`[On-Demand] Retry error on ${trySym}:`, err.message);
             }
         }
-        signal.leverage = sigLeverage;
 
-        const saved = await this._saveSignal(signal, mtf, primary, walletContext);
-        this._lastSignalTime.set(symbol, Date.now());
-        
-        return { signal, saved, mtf, avgVolumeUsdt: primary?.volumeContext?.avgVolumeUsdt || null };
+        // All attempts exhausted — surface best NO_TRADE with list of tried coins
+        const triedExtra = trySymbols.slice(1).map(s => s.replace('USD', '')).join(', ');
+        return {
+            ...(lastNoTrade || { action: 'NO_TRADE', confidence: 0, reasoning: 'No trade setup' }),
+            reasoning: (lastNoTrade?.reasoning || 'No trade setup') +
+                (triedExtra ? ` (Also checked: ${triedExtra} — no setup found)` : ''),
+        };
     }
 
     getStats() {

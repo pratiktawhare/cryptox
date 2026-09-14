@@ -15,8 +15,8 @@ const SOCKET_URL = import.meta.env.VITE_API_URL
 // ─── Signal card color helpers ────────────────────────────────────────────────
 
 function confidenceColor(confidence) {
-    if (confidence >= 80) return { text: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-400/20' };
-    if (confidence >= 65) return { text: 'text-cyan-400', bg: 'bg-cyan-400/10', border: 'border-cyan-400/20' };
+    if (confidence >= 85) return { text: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-400/20' };
+    if (confidence >= 72) return { text: 'text-cyan-400', bg: 'bg-cyan-400/10', border: 'border-cyan-400/20' };
     return { text: 'text-yellow-400', bg: 'bg-yellow-400/10', border: 'border-yellow-400/20' };
 }
 
@@ -136,8 +136,12 @@ function SignalCard({ signal, onTrade }) {
                 {/* R/R and tags */}
                 <div className="mt-2.5 flex items-center gap-2 flex-wrap">
                     {signal.riskReward && (
-                        <span className="text-xs text-crypto-muted bg-crypto-bg-subtle px-2 py-0.5 rounded-md">
-                            R/R: 1:{signal.riskReward}
+                        <span className={`text-xs px-2 py-0.5 rounded-md font-semibold ${
+                            signal.riskReward >= 2.0
+                                ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
+                                : 'text-crypto-muted bg-crypto-bg-subtle'
+                        }`}>
+                            R/R 1:{signal.riskReward}
                         </span>
                     )}
                     {signal.tags?.slice(0, 4).map(tag => (
@@ -145,13 +149,28 @@ function SignalCard({ signal, onTrade }) {
                             {tag}
                         </span>
                     ))}
-                    <span className={`ml-auto text-[10px] font-medium px-2 py-0.5 rounded-full border ${
-                        signal.status === 'pending' ? 'text-yellow-400 bg-yellow-400/8 border-yellow-400/20' :
-                        signal.status === 'hit_tp1' || signal.status === 'hit_tp2' ? 'text-emerald-400 bg-emerald-400/8 border-emerald-400/20' :
-                        signal.status === 'hit_sl' ? 'text-red-400 bg-red-400/8 border-red-400/20' :
-                        'text-crypto-muted bg-crypto-bg-subtle border-crypto-border'
+                    {/* Status badge */}
+                    <span className={`ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-full border flex items-center gap-1 ${
+                        signal.status === 'pending'
+                            ? 'text-amber-400 bg-amber-400/8 border-amber-400/20'
+                        : signal.status === 'active'
+                            ? 'text-emerald-400 bg-emerald-400/8 border-emerald-400/20'
+                        : signal.status === 'completed'
+                            ? 'text-emerald-400 bg-emerald-400/8 border-emerald-400/20'
+                        : signal.status === 'stopped'
+                            ? 'text-red-400 bg-red-400/8 border-red-400/20'
+                        : signal.status === 'expired'
+                            ? 'text-crypto-muted bg-crypto-bg-subtle border-crypto-border'
+                        : 'text-crypto-muted bg-crypto-bg-subtle border-crypto-border'
                     }`}>
-                        {signal.status}
+                        {signal.status === 'pending' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />}
+                        {signal.status === 'active'  && <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+                        {signal.status === 'pending'   ? 'Awaiting Entry'
+                        : signal.status === 'active'   ? 'Active'
+                        : signal.status === 'completed' ? '✓ TP Hit'
+                        : signal.status === 'stopped'   ? '✗ SL Hit'
+                        : signal.status === 'expired'   ? 'Expired'
+                        : signal.status}
                     </span>
                 </div>
 
@@ -216,17 +235,23 @@ function SignalCard({ signal, onTrade }) {
 
                     {/* Action buttons */}
                     <div className="flex gap-2 pt-1">
-                        <button
-                            onClick={() => onTrade && onTrade(signal)}
-                            disabled={signal.status !== 'pending'}
-                            className={`flex-1 py-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
-                                signal.status === 'pending'
-                                    ? `${style.bg} ${style.text} ${style.border} hover:opacity-80`
-                                    : 'bg-crypto-bg-subtle text-crypto-muted border-crypto-border cursor-not-allowed'
-                            }`}
-                        >
-                            {signal.status === 'pending' ? `Execute ${signal.action}` : 'Signal Closed'}
-                        </button>
+                        {signal.status === 'pending' ? (
+                            <div className="flex-1 py-2 rounded-lg text-xs font-semibold border text-center text-amber-400 bg-amber-400/8 border-amber-400/20 flex items-center justify-center gap-1.5">
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                Awaiting Entry — Price hasn't reached limit yet
+                            </div>
+                        ) : signal.status === 'active' ? (
+                            <button
+                                onClick={() => onTrade && onTrade(signal)}
+                                className={`flex-1 py-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${style.bg} ${style.text} ${style.border} hover:opacity-80`}
+                            >
+                                Execute {signal.action}
+                            </button>
+                        ) : (
+                            <div className="flex-1 py-2 rounded-lg text-xs font-medium border text-center text-crypto-muted bg-crypto-bg-subtle border-crypto-border">
+                                Signal Closed
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -363,7 +388,7 @@ const Signals = () => {
                                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-live-dot" />
                                 <span className="text-xs text-emerald-400">Live</span>
                             </div>
-                            <p className="text-xs text-crypto-muted hidden sm:block">Gemini AI · 195 coins · On-Demand Scan</p>
+                            <p className="text-xs text-crypto-muted hidden sm:block">AI Engine · 195 coins · On-Demand Scan · gpt-oss-120b</p>
                         </div>
                     </div>
 
@@ -501,9 +526,7 @@ const Signals = () => {
                             className="sm:hidden text-xs rounded-lg bg-crypto-input border border-crypto-border text-crypto-heading focus:outline-none focus:ring-1 focus:ring-crypto-primary/30 focus:border-crypto-primary transition-all px-2 py-1 cursor-pointer flex-1 max-w-[140px]"
                         >
                             <option value="all">All</option>
-                            <option value="50-60">50–60%</option>
-                            <option value="60-70">60–70%</option>
-                            <option value="70-80">70–80%</option>
+                            <option value="65-80">65–80%</option>
                             <option value="80-90">80–90%</option>
                             <option value="90-100">90–100%</option>
                         </select>
@@ -511,12 +534,10 @@ const Signals = () => {
                         {/* Desktop: button group */}
                         <div className="hidden sm:flex gap-1 flex-wrap">
                             {[
-                                { key: 'all', label: 'All' },
-                                { key: '50-60', label: '50-60%' },
-                                { key: '60-70', label: '60-70%' },
-                                { key: '70-80', label: '70-80%' },
-                                { key: '80-90', label: '80-90%' },
-                                { key: '90-100', label: '90-100%' }
+                                { key: 'all',    label: 'All' },
+                                { key: '65-80',  label: '65–80%' },
+                                { key: '80-90',  label: '80–90%' },
+                                { key: '90-100', label: '90–100%' },
                             ].map(c => (
                                 <button
                                     key={c.key}
@@ -590,6 +611,12 @@ const Signals = () => {
                         <p className="text-xs text-crypto-muted leading-relaxed max-w-3xl">
                             {scanResult.reasoning}
                         </p>
+                        {scanResult.signal?.retryNote && (
+                            <p className="mt-1.5 text-[10px] text-cyan-400/80 flex items-center gap-1">
+                                <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                {scanResult.signal.retryNote}
+                            </p>
+                        )}
                         {scanResult.action !== 'NO_TRADE' && scanResult.action !== 'ERROR' && (
                             <button
                                 onClick={() => {

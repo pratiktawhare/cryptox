@@ -12,8 +12,10 @@ const TradeSignal  = require('../../models/TradeSignal');
 const AiCorrection = require('../../models/AiCorrection');
 const notificationService = require('../NotificationService');
 
-const CHECK_INTERVAL_MS  = 30_000;  // 30 seconds
-const SIGNAL_EXPIRY_HOURS = 24;     // auto-expire after 24h
+const CHECK_INTERVAL_MS       = 30_000;  // 30 seconds
+const SIGNAL_EXPIRY_HOURS     = 24;      // auto-expire scalp signals after 24h
+const SIGNAL_EXPIRY_HOURS_SWING = 72;   // swing/position signals need more time
+const ENTRY_TOLERANCE_PCT     = 0.005;  // 0.5% — price must reach within this % of entry to confirm fill
 
 class SignalTracker {
     constructor() {
@@ -44,7 +46,7 @@ class SignalTracker {
     async _tick() {
         if (!this.running) return;
         try {
-            // Fetch all active signals (BUY/SELL with SL/TP set)
+            // Fetch all active signals (BUY/SELL with SL set)
             const signals = await TradeSignal.find({
                 action:   { $in: ['BUY', 'SELL'] },
                 status:   { $in: ['active', 'pending'] },
@@ -57,16 +59,47 @@ class SignalTracker {
                 const price = this._getPrice(signal.symbol);
                 if (!price) continue;
 
-                // ── Check expiry ──────────────────────────────────────────
+                // ── Determine correct expiry based on trade type ────────────────────
+                const isSwingOrPosition = signal.tradeType === 'swing' || signal.tradeType === 'position';
+                const expiryHours = isSwingOrPosition ? SIGNAL_EXPIRY_HOURS_SWING : SIGNAL_EXPIRY_HOURS;
                 const ageHours = (now - new Date(signal.createdAt).getTime()) / 3_600_000;
-                if (ageHours > SIGNAL_EXPIRY_HOURS) {
+
+                if (ageHours > expiryHours) {
                     await this._markOutcome(signal, price, 'timeout');
                     continue;
                 }
 
                 const isBuy = signal.action === 'BUY';
 
-                // ── TP hit ────────────────────────────────────────────────
+                // ── Entry Confirmation (pending signals only) ────────────────────
+                // A pending signal is one where a LIMIT entry was set.
+                // We do NOT track SL/TP until price actually reaches the entry zone.
+                // This prevents recording phantom wins/losses for trades never filled.
+                if (signal.status === 'pending') {
+                    if (!signal.entry) {
+                        // No limit entry set — treat as market order, activate immediately
+                        await TradeSignal.findByIdAndUpdate(signal._id, { status: 'active' });
+                        continue;
+                    }
+
+                    const tolerance = signal.entry * ENTRY_TOLERANCE_PCT;
+                    // BUY limit: price must dip to/below entry (plus tolerance)
+                    // SELL limit: price must rise to/above entry (minus tolerance)
+                    const entryConfirmed = isBuy
+                        ? price <= signal.entry + tolerance
+                        : price >= signal.entry - tolerance;
+
+                    if (entryConfirmed) {
+                        await TradeSignal.findByIdAndUpdate(signal._id, { status: 'active' });
+                        console.log(`[SignalTracker] 📍 Entry confirmed: ${signal.symbol} ${signal.action} @ $${price} (limit: $${signal.entry})`);
+                    }
+                    // Either way — don't track SL/TP yet; wait for next tick after activation
+                    continue;
+                }
+
+                // ── SL/TP tracking (active signals only) ──────────────────────
+
+                // TP hit
                 if (signal.target1) {
                     const tpHit = isBuy
                         ? price >= signal.target1
@@ -77,7 +110,7 @@ class SignalTracker {
                     }
                 }
 
-                // ── SL hit ────────────────────────────────────────────────
+                // SL hit
                 const slHit = isBuy
                     ? price <= signal.stopLoss
                     : price >= signal.stopLoss;

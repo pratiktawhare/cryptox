@@ -175,22 +175,45 @@ class SelfLearning {
         return 'NEUTRAL';
     }
 
-    // ── Format for Gemini prompt injection ────────────────────────────────────
+    // ── Format for prompt injection (actionable only — no demoralizing stats) ──
 
     formatForPrompt(symbolCtx, globalCtx) {
+        // DESIGN RATIONALE: We deliberately do NOT inject global win rates or
+        // loss counts. Showing the AI a low win rate causes it to enter defensive
+        // mode, producing overly conservative NO_TRADE responses and wider/worse
+        // stop placements. Instead we inject only specific, actionable patterns.
+
         const parts = [];
 
-        if (globalCtx) {
-            parts.push(`[AI SELF-LEARNING — Global: ${globalCtx.globalWinRate} win rate across ${globalCtx.totalSignals} signals | Avg R/R: ${globalCtx.avgRRachieved} | Top performers: ${globalCtx.topPerformers} | Underperformers: ${globalCtx.underPerformers}]`);
+        // ── Symbol-specific actionable guidance ──
+        if (symbolCtx && symbolCtx.signals >= 3) {
+            const rec = symbolCtx.recommendation;
+            const slNote = symbolCtx.slTightness;
+            const rrNote = symbolCtx.avgRRachieved
+                ? `Avg R/R achieved: ${symbolCtx.avgRRachieved}`
+                : null;
+
+            // Only surface guidance that is actually useful (not NEUTRAL/OK states)
+            const isProblematic = rec && (rec.startsWith('CAUTION') || rec.startsWith('HIGH_CONFIDENCE'));
+            const hasSlIssue    = slNote && slNote.includes('too tight');
+
+            if (isProblematic || hasSlIssue) {
+                const notes = [];
+                if (hasSlIssue) notes.push(slNote);
+                if (rrNote)     notes.push(rrNote);
+                if (rec && rec.startsWith('CAUTION'))        notes.push('Tighten entry conditions or skip marginal setups on this symbol.');
+                if (rec && rec.startsWith('HIGH_CONFIDENCE')) notes.push('Historically strong signal accuracy on this symbol.');
+                parts.push(`[Historical Pattern — ${symbolCtx.symbol} (${symbolCtx.signals} trades): ${notes.join(' | ')}]`);
+            }
         }
 
-        if (symbolCtx) {
-            parts.push(`[Symbol history — ${symbolCtx.symbol}: ${symbolCtx.winRate} win rate (${symbolCtx.signals} signals) | Avg R/R: ${symbolCtx.avgRRachieved} | Holding: ~${symbolCtx.avgHoldingHours}h | Note: ${symbolCtx.slTightness || 'N/A'} | Recommendation: ${symbolCtx.recommendation}]`);
+        // ── Global: only surface underperforming symbols to avoid ──
+        if (globalCtx && globalCtx.underPerformers && globalCtx.underPerformers !== 'N/A') {
+            parts.push(`[Symbols with historically poor AI accuracy — apply extra caution: ${globalCtx.underPerformers}]`);
         }
 
-        if (parts.length === 0) {
-            return '[AI SELF-LEARNING — No historical data yet; using base analysis only]';
-        }
+        // Return null if no useful guidance — don't add noise to the prompt
+        if (parts.length === 0) return null;
 
         return parts.join('\n');
     }

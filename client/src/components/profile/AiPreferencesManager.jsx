@@ -136,7 +136,8 @@ const AiPreferencesManager = () => {
                             }`}
                         >
                             <span className="text-sm font-bold block">Groq Cloud</span>
-                            <span className="text-[10px] opacity-75 mt-0.5">Llama-3.3-70b-versatile (Fast)</span>
+                            <span className="text-[10px] opacity-75 mt-0.5">gpt-oss-120b (Fast + Smart)</span>
+                            <span className="text-[9px] opacity-50 mt-0.5">Auto-fallback: qwen3, gpt-oss-20b</span>
                             {groqKeyActive ? (
                                 <span className="mt-2 text-[9px] px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded font-semibold">Custom Key Active</span>
                             ) : (
