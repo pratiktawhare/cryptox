@@ -63,6 +63,7 @@ const preferencesSchema = new mongoose.Schema({
     // ── Paper Trading Automation (completely independent of live) ─────────────
     paperAuto: {
         enabled:             { type: Boolean, default: false },
+        reverseMode:         { type: Boolean, default: false }, // Flip BUY→SELL, swap SL↔TP
         intervalMinutes:     { type: Number,  default: 30,   min: 15, max: 240 },
         estimatedWalletUSD:  { type: Number,  default: 1000, min: 10 },
         tradePct:            { type: Number,  default: 20,   min: 5,  max: 80  }, // % of estimatedWalletUSD → margin per trade
@@ -79,6 +80,7 @@ const preferencesSchema = new mongoose.Schema({
     // ── Live Trading Automation (completely independent of paper) ─────────────
     liveAuto: {
         enabled:             { type: Boolean, default: false },
+        reverseMode:         { type: Boolean, default: false }, // Flip BUY→SELL, swap SL↔TP
         intervalMinutes:     { type: Number,  default: 30,   min: 15, max: 240 },
         estimatedWalletUSD:  { type: Number,  default: 1000, min: 10 },
         tradePct:            { type: Number,  default: 20,   min: 5,  max: 80  },

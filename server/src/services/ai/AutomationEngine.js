@@ -57,6 +57,9 @@ class AutomationEngine {
         // Daily report check every minute
         this._reportTimer = setInterval(() => this._checkDailyReports(), 60 * 1000);
 
+        // Sync AutomationLog outcomes from closed positions every 3 minutes
+        this._syncTimer = setInterval(() => this._syncAutomationLogOutcomes().catch(() => {}), 3 * 60 * 1000);
+
         console.log('[AutomationEngine] Initialised ✓');
     }
 
@@ -220,33 +223,49 @@ class AutomationEngine {
             return;
         }
 
+        // ── Reverse Engineering Mode ──────────────────────────────────────────
+        // Flips BUY→SELL (and vice-versa) and swaps SL↔TP at execution time.
+        // The AI signal stored in DB is UNCHANGED — only execution is mirrored.
+        const reverseMode = cfg.reverseMode === true;
+        const execSignal  = { ...signal }; // shallow clone — never mutate the original
+
+        if (reverseMode) {
+            const origAction = execSignal.action;
+            execSignal.action   = origAction === 'BUY' ? 'SELL' : 'BUY';
+            // Swap stop-loss and target so the trade still has a valid R/R structure
+            const origSL        = execSignal.stopLoss;
+            execSignal.stopLoss = execSignal.target1;
+            execSignal.target1  = origSL;
+            console.log(`[AutomationEngine] 🔄 REVERSE MODE: ${origAction} → ${execSignal.action} | SL↔TP swapped for ${execSignal.symbol}`);
+        }
+
         // ── Clamp leverage to user's allowed range ────────────────────────────
-        const rawLeverage = signal.leverage || cfg.maxLeverage;
-        const leverage    = Math.max(cfg.minLeverage, Math.min(cfg.maxLeverage, rawLeverage));
-        signal.leverage   = leverage;
+        const rawLeverage    = execSignal.leverage || cfg.maxLeverage;
+        const leverage       = Math.max(cfg.minLeverage, Math.min(cfg.maxLeverage, rawLeverage));
+        execSignal.leverage  = leverage;
 
         // ── Recalculate quantity from margin budget ───────────────────────────
-        const entry    = signal.entry || signal.entryPrice || 0;
+        const entry = execSignal.entry || execSignal.entryPrice || 0;
         if (entry > 0) {
             const marginPerContract = entry / leverage;
-            signal.quantity = Math.max(1, Math.floor(marginBudget / marginPerContract));
+            execSignal.quantity = Math.max(1, Math.floor(marginBudget / marginPerContract));
         }
 
         const actualMargin = entry > 0
-            ? (signal.quantity * entry) / leverage
+            ? (execSignal.quantity * entry) / leverage
             : marginBudget;
 
-        console.log(`[AutomationEngine] ✅ ${mode} ${signal.action} ${signal.symbol} conf:${signal.confidence}% lev:${leverage}x margin:$${actualMargin.toFixed(2)}`);
+        console.log(`[AutomationEngine] ✅ ${mode}${reverseMode ? ' [REVERSED]' : ''} ${execSignal.action} ${execSignal.symbol} conf:${signal.confidence}% lev:${leverage}x margin:$${actualMargin.toFixed(2)}`);
 
         // ── Execute trade ─────────────────────────────────────────────────────
         let positionId = null;
         let executeErr = null;
         try {
             if (mode === 'paper') {
-                const result = await this._executePaper(signal, prefs, cfg);
+                const result = await this._executePaper(execSignal, prefs, cfg);
                 positionId = result?._id || result?.position?._id || result?.order?._id;
             } else {
-                const result = await this._executeLive(signal, prefs);
+                const result = await this._executeLive(execSignal, prefs);
                 positionId = result?._id || result?.orderId;
             }
         } catch (err) {
@@ -255,22 +274,26 @@ class AutomationEngine {
         }
 
         // ── Log the cycle ─────────────────────────────────────────────────────
+        // Log the EXECUTED action (execSignal) but preserve original AI action for audit
         await AutomationLog.create({
             mode, date,
-            cycleAction:  signal.action,
-            symbol:       signal.symbol,
+            cycleAction:  execSignal.action,                  // what was actually executed
+            symbol:       execSignal.symbol,
             confidence:   signal.confidence,
-            entryPrice:   signal.entry,
-            quantity:     signal.quantity,
+            entryPrice:   execSignal.entry,
+            quantity:     execSignal.quantity,
             marginUsed:   actualMargin,
             leverage,
-            stopLoss:     signal.stopLoss,
-            target1:      signal.target1,
-            riskReward:   signal.riskReward,
+            stopLoss:     execSignal.stopLoss,
+            target1:      execSignal.target1,
+            riskReward:   execSignal.riskReward,
             outcome:      executeErr ? 'pending' : 'open',
             signalId:     signal._id || scanResult?.saved?._id || null,
             positionId,
-            notes:        executeErr || '',
+            notes:        [
+                executeErr || '',
+                reverseMode ? `[REVERSED] AI predicted ${signal.action} → executed ${execSignal.action}` : '',
+            ].filter(Boolean).join(' | ') || '',
         });
 
         // ── Update lastCycleAt in prefs ───────────────────────────────────────
@@ -282,13 +305,15 @@ class AutomationEngine {
         // ── Real-time event ───────────────────────────────────────────────────
         this._emit('automation_cycle', {
             mode,
-            action:      signal.action,
-            symbol:      signal.symbol,
+            action:      execSignal.action,
+            aiAction:    signal.action,       // original AI prediction (for UI display)
+            reverseMode,
+            symbol:      execSignal.symbol,
             confidence:  signal.confidence,
             leverage,
             margin:      actualMargin,
             error:       executeErr,
-            nextCycleAt: this._nextCycleAt[mode],  // ← real next-cycle timestamp
+            nextCycleAt: this._nextCycleAt[mode],
         });
     }
 
@@ -409,6 +434,53 @@ class AutomationEngine {
         }
     }
 
+    // ─── Sync AutomationLog outcomes from closed positions ───────────────────
+
+    async _syncAutomationLogOutcomes() {
+        // Find all paper automation logs that have a positionId but outcome is still 'open' or 'pending'
+        const staleLogs = await AutomationLog.find({
+            mode: 'paper',
+            positionId: { $ne: null },
+            outcome: { $in: ['open', 'pending'] },
+            cycleAction: { $in: ['BUY', 'SELL'] },
+        }).lean();
+
+        if (staleLogs.length === 0) return;
+
+        const positionIds = staleLogs.map(l => l.positionId);
+        const closedPos   = await PaperPosition.find({
+            _id: { $in: positionIds },
+            status: { $ne: 'open' },
+        }).lean();
+
+        if (closedPos.length === 0) return;
+
+        const posMap = {};
+        for (const p of closedPos) posMap[p._id.toString()] = p;
+
+        let syncCount = 0;
+        for (const log of staleLogs) {
+            const pos = posMap[log.positionId.toString()];
+            if (!pos) continue;
+
+            const pnl    = pos.realisedPnl ?? 0;
+            const pnlPct = log.marginUsed ? parseFloat(((pnl / log.marginUsed) * 100).toFixed(2)) : null;
+            const outcome = pos.status === 'closed_tp'     ? 'tp_hit'
+                          : pos.status === 'closed_sl'     ? 'sl_hit'
+                          : pos.status === 'closed_manual' ? 'timeout'
+                          : 'timeout';
+
+            await AutomationLog.updateOne({ _id: log._id }, {
+                $set: { outcome, pnl, pnlPct, exitPrice: pos.closePrice }
+            });
+            syncCount++;
+        }
+
+        if (syncCount > 0) {
+            console.log(`[AutomationEngine] 🔄 Synced ${syncCount} AutomationLog outcome(s) from closed positions`);
+        }
+    }
+
     // ─── Daily report ────────────────────────────────────────────────────────
 
     async _checkDailyReports() {
@@ -439,21 +511,82 @@ class AutomationEngine {
         const logs = await AutomationLog.find({ mode, date });
         if (logs.length === 0) return;
 
-        const trades     = logs.filter(l => ['BUY','SELL'].includes(l.cycleAction));
-        const closed     = trades.filter(l => ['tp_hit','sl_hit','trailed_out','timeout'].includes(l.outcome));
-        const wins       = closed.filter(l => l.pnl > 0);
-        const losses     = closed.filter(l => l.pnl <= 0);
-        const totalPnl   = closed.reduce((s, l) => s + (l.pnl || 0), 0);
-        const totalMargin= trades.reduce((s, l) => s + (l.marginUsed || 0), 0);
-        const avgConf    = trades.length
-            ? trades.reduce((s, l) => s + (l.confidence || 0), 0) / trades.length
-            : 0;
-        const avgLev     = trades.length
-            ? trades.reduce((s, l) => s + (l.leverage || 0), 0) / trades.length
-            : 0;
+        const tradeLogs = logs.filter(l => ['BUY','SELL'].includes(l.cycleAction));
 
-        const bestTrade  = closed.reduce((best, l) => (!best || (l.pnl||0) > (best.pnl||0)) ? l : best, null);
-        const worstTrade = closed.reduce((worst, l) => (!worst || (l.pnl||0) < (worst.pnl||0)) ? l : worst, null);
+        // ── Sync AutomationLog outcomes from closed positions ─────────────────
+        // This backfills pnl/exitPrice/outcome on each log entry using the actual position
+        if (mode === 'paper') {
+            for (const log of tradeLogs) {
+                if (!log.positionId) continue;
+                if (['tp_hit','sl_hit','trailed_out','timeout'].includes(log.outcome)) continue; // already synced
+
+                const pos = await PaperPosition.findById(log.positionId).lean();
+                if (!pos || pos.status === 'open') continue;
+
+                const pnl     = pos.realisedPnl ?? 0;
+                const pnlPct  = log.marginUsed ? parseFloat(((pnl / log.marginUsed) * 100).toFixed(2)) : null;
+                const outcome = pos.status === 'closed_tp'     ? 'tp_hit'
+                              : pos.status === 'closed_sl'     ? 'sl_hit'
+                              : pos.status === 'closed_manual' ? 'timeout'
+                              : 'timeout';
+
+                await AutomationLog.updateOne({ _id: log._id }, {
+                    $set: { outcome, pnl, pnlPct, exitPrice: pos.closePrice }
+                });
+                // Update in-memory for report calculation below
+                log.outcome   = outcome;
+                log.pnl       = pnl;
+                log.pnlPct    = pnlPct;
+                log.exitPrice = pos.closePrice;
+            }
+        }
+
+        // ── Calculate report metrics ──────────────────────────────────────────
+        let totalPnl   = 0;
+        let wins       = [];
+        let losses     = [];
+        let closed     = [];
+
+        if (mode === 'paper') {
+            // Join PaperPosition directly for most accurate PnL (covers all closed positions today)
+            const positionIds = tradeLogs.map(l => l.positionId).filter(Boolean);
+            const positions   = positionIds.length
+                ? await PaperPosition.find({ _id: { $in: positionIds }, status: { $ne: 'open' } }).lean()
+                : [];
+
+            totalPnl = positions.reduce((s, p) => s + (p.realisedPnl || 0), 0);
+            wins     = positions.filter(p => (p.realisedPnl || 0) > 0);
+            losses   = positions.filter(p => (p.realisedPnl || 0) <= 0);
+            closed   = positions;
+        } else {
+            // For live: fall back to log.pnl (set by live close handlers)
+            const closedLogs = tradeLogs.filter(l => ['tp_hit','sl_hit','trailed_out','timeout'].includes(l.outcome));
+            totalPnl = closedLogs.reduce((s, l) => s + (l.pnl || 0), 0);
+            wins     = closedLogs.filter(l => (l.pnl || 0) > 0);
+            losses   = closedLogs.filter(l => (l.pnl || 0) <= 0);
+            closed   = closedLogs;
+        }
+
+        const totalMargin = tradeLogs.reduce((s, l) => s + (l.marginUsed || 0), 0);
+        const avgConf     = tradeLogs.length
+            ? tradeLogs.reduce((s, l) => s + (l.confidence || 0), 0) / tradeLogs.length : 0;
+        const avgLev      = tradeLogs.length
+            ? tradeLogs.reduce((s, l) => s + (l.leverage || 0), 0) / tradeLogs.length : 0;
+
+        // Best/worst trade — from positions for paper, from logs for live
+        let bestTrade = null, worstTrade = null;
+        if (mode === 'paper') {
+            const positionIds = tradeLogs.map(l => l.positionId).filter(Boolean);
+            const positions   = positionIds.length
+                ? await PaperPosition.find({ _id: { $in: positionIds }, status: { $ne: 'open' } }).lean()
+                : [];
+            bestTrade  = positions.reduce((b, p) => (!b || (p.realisedPnl||0) > (b.realisedPnl||0)) ? p : b, null);
+            worstTrade = positions.reduce((w, p) => (!w || (p.realisedPnl||0) < (w.realisedPnl||0)) ? p : w, null);
+        } else {
+            const closedLogs = tradeLogs.filter(l => l.pnl != null);
+            bestTrade  = closedLogs.reduce((b, l) => (!b || (l.pnl||0) > (b.pnl||0)) ? l : b, null);
+            worstTrade = closedLogs.reduce((w, l) => (!w || (l.pnl||0) < (w.pnl||0)) ? l : w, null);
+        }
 
         // Wallet snapshot
         let walletEnd = null;

@@ -254,16 +254,20 @@ export default function Analytics() {
     const [activeTab,       setActiveTab]       = useState('overview');
     const [dailyReports,    setDailyReports]    = useState([]);
     const [dailyReportMode, setDailyReportMode] = useState('paper');
+    const [autoLogs,        setAutoLogs]        = useState([]);
+    const [autoLogMode,     setAutoLogMode]     = useState('paper');
+    const [autoLogLoading,  setAutoLogLoading]  = useState(false);
 
     const fetchAll = useCallback(async () => {
         try {
-            const [perfRes, eqRes, sigRes, learnRes, bwRes, drRes] = await Promise.all([
+            const [perfRes, eqRes, sigRes, learnRes, bwRes, drRes, logsRes] = await Promise.all([
                 api.get('/analytics/performance'),
                 api.get(`/analytics/equity-curve?mode=${isPaper ? 'paper' : 'live'}&limit=150`),
                 api.get('/analytics/signals?limit=100'),
                 api.get('/analytics/learning'),
                 api.get(`/analytics/best-worst?mode=${isPaper ? 'paper' : 'live'}`),
                 api.get(`/automation/daily-reports?mode=${dailyReportMode}&limit=30`).catch(() => ({ data: { reports: [] } })),
+                api.get(`/automation/logs?mode=${autoLogMode}&limit=100`).catch(() => ({ data: { logs: [] } })),
             ]);
             setPerformance(perfRes.data);
             setEquity(eqRes.data.points || []);
@@ -271,12 +275,13 @@ export default function Analytics() {
             setLearning(learnRes.data);
             setBestWorst(bwRes.data);
             setDailyReports(drRes.data.reports || []);
+            setAutoLogs(logsRes.data.logs || []);
         } catch (err) {
             console.error('[Analytics] fetch error:', err.message);
         } finally {
             setLoading(false);
         }
-    }, [isPaper, dailyReportMode]);
+    }, [isPaper, dailyReportMode, autoLogMode]);
 
     useEffect(() => {
         fetchAll();
@@ -289,15 +294,25 @@ export default function Analytics() {
             .catch(() => {});
     }, [dailyReportMode]);
 
+    // Re-fetch automation logs when mode switches
+    useEffect(() => {
+        setAutoLogLoading(true);
+        api.get(`/automation/logs?mode=${autoLogMode}&limit=100`)
+            .then(r => setAutoLogs(r.data.logs || []))
+            .catch(() => {})
+            .finally(() => setAutoLogLoading(false));
+    }, [autoLogMode]);
+
     const perf   = performance;
     const wallet = perf?.paper;
     const signals = perf?.signals;
 
     const TABS = [
-        { key: 'overview',  label: 'Overview' },
-        { key: 'signals',   label: 'AI Signals' },
-        { key: 'learning',  label: '🤖 Self-Learning' },
-        { key: 'trades',    label: 'Best / Worst' },
+        { key: 'overview',   label: '📊 Overview' },
+        { key: 'signals',    label: '🤖 AI Signals' },
+        { key: 'learning',   label: '🧠 Self-Learning' },
+        { key: 'trades',     label: '🏆 Best / Worst' },
+        { key: 'automation', label: '⚡ Automation Logs' },
     ];
 
     return (
@@ -622,50 +637,183 @@ export default function Analytics() {
                                 })}
                             </div>
                         )}
+                        {/* ── AUTOMATION LOGS TAB ── */}
+                        {activeTab === 'automation' && (
+                            <div className="space-y-4 md:space-y-6 animate-fade-in">
+
+                                {/* Mode switcher */}
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs text-crypto-muted font-medium">Mode:</span>
+                                    {['paper','live'].map(m => (
+                                        <button
+                                            key={m}
+                                            onClick={() => setAutoLogMode(m)}
+                                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                                                autoLogMode === m
+                                                    ? m === 'live'
+                                                        ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                                        : 'bg-crypto-primary/10 text-crypto-primary border border-crypto-primary/20'
+                                                    : 'text-crypto-muted hover:text-crypto-heading border border-transparent'
+                                            }`}
+                                        >
+                                            {m === 'live' ? '💰' : '📄'} {m.charAt(0).toUpperCase() + m.slice(1)}
+                                        </button>
+                                    ))}
+                                    <span className="ml-auto text-[10px] text-crypto-muted">{autoLogs.length} entries</span>
+                                </div>
+
+                                {/* Cycle logs table */}
+                                <div className="bg-crypto-card border border-crypto-border rounded-xl overflow-hidden">
+                                    <div className="px-5 py-3 border-b border-crypto-border flex items-center justify-between">
+                                        <div>
+                                            <h2 className="text-sm font-bold text-crypto-heading">AI Cycle Logs</h2>
+                                            <p className="text-[10px] text-crypto-muted mt-0.5">Every automation cycle — trades placed, skipped, or errors</p>
+                                        </div>
+                                        <button
+                                            onClick={() => {
+                                                setAutoLogLoading(true);
+                                                api.get(`/automation/logs?mode=${autoLogMode}&limit=100`)
+                                                    .then(r => setAutoLogs(r.data.logs || []))
+                                                    .catch(() => {})
+                                                    .finally(() => setAutoLogLoading(false));
+                                            }}
+                                            className="p-1.5 rounded-lg text-crypto-muted hover:text-crypto-primary hover:bg-crypto-primary/10 transition-all cursor-pointer"
+                                            title="Refresh logs"
+                                        >
+                                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                            </svg>
+                                        </button>
+                                    </div>
+
+                                    {autoLogLoading ? (
+                                        <div className="p-6 space-y-2">
+                                            {[...Array(5)].map((_,i) => <div key={i} className="h-8 bg-crypto-border/30 rounded animate-pulse" />)}
+                                        </div>
+                                    ) : autoLogs.length === 0 ? (
+                                        <div className="p-10 text-center">
+                                            <div className="text-3xl mb-2">⚡</div>
+                                            <p className="text-sm text-crypto-muted">No automation cycles recorded yet</p>
+                                            <p className="text-xs text-crypto-muted mt-1">Start automation in Settings → AI Trade Automation</p>
+                                        </div>
+                                    ) : (
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-xs">
+                                                <thead>
+                                                    <tr className="text-[10px] text-crypto-muted uppercase tracking-wider border-b border-crypto-border bg-crypto-bg-subtle">
+                                                        <th className="text-left px-4 py-2.5 font-medium">Time</th>
+                                                        <th className="text-left px-4 py-2.5 font-medium">Symbol</th>
+                                                        <th className="text-center px-4 py-2.5 font-medium">Action</th>
+                                                        <th className="text-right px-4 py-2.5 font-medium">Conf</th>
+                                                        <th className="text-right px-4 py-2.5 font-medium">Lev</th>
+                                                        <th className="text-right px-4 py-2.5 font-medium">Margin</th>
+                                                        <th className="text-left px-4 py-2.5 font-medium">Status</th>
+                                                        <th className="text-left px-4 py-2.5 font-medium min-w-[160px]">Notes</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-crypto-border/30">
+                                                    {autoLogs.map((log, i) => {
+                                                        const isReversed = log.notes?.includes('[REVERSED]');
+                                                        const actionColor =
+                                                            log.cycleAction === 'NO_TRADE'       ? 'text-crypto-muted bg-crypto-border/20' :
+                                                            log.cycleAction === 'SKIPPED_BALANCE' ? 'text-amber-400 bg-amber-500/10' :
+                                                            log.cycleAction === 'ERROR'           ? 'text-red-400 bg-red-500/10' :
+                                                            log.cycleAction === 'BUY'             ? 'text-emerald-400 bg-emerald-500/10' :
+                                                            log.cycleAction === 'SELL'            ? 'text-red-400 bg-red-500/10' :
+                                                                                                    'text-crypto-muted bg-crypto-border/10';
+                                                        const outcomeColor =
+                                                            log.outcome === 'open'    ? 'text-crypto-primary' :
+                                                            log.outcome === 'win'     ? 'text-emerald-400' :
+                                                            log.outcome === 'loss'    ? 'text-red-400' :
+                                                            log.outcome === 'pending' ? 'text-amber-400' : 'text-crypto-muted';
+
+                                                        return (
+                                                            <tr key={log._id || i} className="hover:bg-crypto-card-hover transition-colors">
+                                                                <td className="px-4 py-2.5 text-crypto-muted whitespace-nowrap">
+                                                                    {new Date(log.createdAt).toLocaleString('en-IN', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })}
+                                                                </td>
+                                                                <td className="px-4 py-2.5 font-semibold text-crypto-heading">
+                                                                    {log.symbol ? log.symbol.replace('USD', '/USD') : '—'}
+                                                                </td>
+                                                                <td className="px-4 py-2.5 text-center">
+                                                                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold text-[10px] ${actionColor}`}>
+                                                                        {isReversed && <span title="Reverse Mode">🔄</span>}
+                                                                        {log.cycleAction || '—'}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="px-4 py-2.5 text-right tabular-nums text-crypto-heading">
+                                                                    {log.confidence ? `${log.confidence}%` : '—'}
+                                                                </td>
+                                                                <td className="px-4 py-2.5 text-right tabular-nums text-crypto-muted">
+                                                                    {log.leverage ? `${log.leverage}×` : '—'}
+                                                                </td>
+                                                                <td className="px-4 py-2.5 text-right tabular-nums text-crypto-heading">
+                                                                    {log.marginUsed ? `$${log.marginUsed.toFixed(2)}` : '—'}
+                                                                </td>
+                                                                <td className="px-4 py-2.5">
+                                                                    <span className={`font-semibold text-[10px] ${outcomeColor}`}>
+                                                                        {log.outcome || '—'}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="px-4 py-2.5 text-crypto-muted max-w-[200px] truncate" title={log.notes}>
+                                                                    {log.notes || '—'}
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Daily Reports inside the Automation tab */}
+                                <div className="bg-crypto-card border border-crypto-border rounded-xl overflow-hidden">
+                                    <div className="px-5 py-3 border-b border-crypto-border flex items-center justify-between">
+                                        <div>
+                                            <h2 className="text-sm font-bold text-crypto-heading">📋 Daily AI Reports</h2>
+                                            <p className="text-[10px] text-crypto-muted mt-0.5">Automation performance summaries — generated at end of each day</p>
+                                        </div>
+                                        <div className="flex gap-1">
+                                            {['paper','live'].map(m => (
+                                                <button
+                                                    key={m}
+                                                    onClick={() => setDailyReportMode(m)}
+                                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold transition-all cursor-pointer ${
+                                                        dailyReportMode === m
+                                                            ? m === 'live'
+                                                                ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                                                : 'bg-crypto-primary/10 text-crypto-primary border border-crypto-primary/20'
+                                                            : 'text-crypto-muted hover:text-crypto-heading'
+                                                    }`}
+                                                >
+                                                    {m === 'live' ? '💰' : '📄'} {m.charAt(0).toUpperCase() + m.slice(1)}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="p-4">
+                                        {dailyReports.length === 0 ? (
+                                            <div className="py-8 text-center">
+                                                <div className="text-2xl mb-2">📊</div>
+                                                <p className="text-sm text-crypto-muted">No daily reports yet</p>
+                                                <p className="text-xs text-crypto-muted mt-1">Reports appear after the first full day of automation</p>
+                                            </div>
+                                        ) : (
+                                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                                                {dailyReports.map(r => (
+                                                    <DailyReportCard key={`${r.date}-${r.mode}`} report={r} />
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </>
                 )}
             </main>
-
-            {/* ── Daily AI Automation Reports ── */}
-            <section className="mt-8">
-                <div className="flex items-center justify-between mb-3">
-                    <div>
-                        <h2 className="text-sm font-bold text-crypto-heading">Daily AI Reports</h2>
-                        <p className="text-[10px] text-crypto-muted mt-0.5">Automation performance summaries generated at end of each day</p>
-                    </div>
-                    <div className="flex gap-1">
-                        {['paper','live'].map(m => (
-                            <button
-                                key={m}
-                                onClick={() => setDailyReportMode(m)}
-                                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                                    dailyReportMode === m
-                                        ? m === 'live'
-                                            ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                                            : 'bg-crypto-primary/10 text-crypto-primary border border-crypto-primary/20'
-                                        : 'text-crypto-muted hover:text-crypto-heading'
-                                }`}
-                            >
-                                {m === 'live' ? '💰' : '📄'} {m.charAt(0).toUpperCase() + m.slice(1)}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-
-                {dailyReports.length === 0 ? (
-                    <div className="bg-crypto-card border border-crypto-border rounded-xl p-8 text-center">
-                        <div className="text-2xl mb-2">📊</div>
-                        <p className="text-sm text-crypto-muted">No daily reports yet</p>
-                        <p className="text-xs text-crypto-muted mt-1">Reports appear here after the first day of automation running</p>
-                    </div>
-                ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                        {dailyReports.map(r => (
-                            <DailyReportCard key={`${r.date}-${r.mode}`} report={r} />
-                        ))}
-                    </div>
-                )}
-            </section>
 
             <MobileBottomNav />
         </div>

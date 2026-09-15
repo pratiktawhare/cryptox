@@ -44,14 +44,14 @@ function Toggle({ label, hint, checked, onChange }) {
 
 // ─── Mode Panel ───────────────────────────────────────────────────────────────
 
-function ModePanel({ mode, status, config, onSave, onToggle, toggling = false }) {
-    const isLive    = mode === 'live';
-    const isRunning = status?.running;
-    const accent    = isLive ? 'amber' : 'blue';
+function ModePanel({ mode, status, config, onSave, onToggle, onToggleReverse, toggling = false, reverseToggling = false }) {
+    const isLive       = mode === 'live';
+    const isRunning    = status?.running;
+    const isReversed   = !!config?.reverseMode;
 
-    const [cfg, setCfg]     = useState(config || {});
+    const [cfg, setCfg]   = useState(config || {});
     const [saving, setSaving] = useState(false);
-    const [msg, setMsg]     = useState('');
+    const [msg, setMsg]   = useState('');
 
     useEffect(() => { setCfg(config || {}); }, [config]);
 
@@ -86,35 +86,98 @@ function ModePanel({ mode, status, config, onSave, onToggle, toggling = false })
                 </div>
             )}
 
-            {/* Start/Stop button */}
-            <div className="flex items-center justify-between">
+            {/* Reverse Mode active banner */}
+            {isReversed && isRunning && (
+                <div className="flex items-start gap-2 bg-orange-500/15 border border-orange-500/30 rounded-lg px-3 py-2.5 animate-pulse-slow">
+                    <span className="text-orange-400 text-sm flex-shrink-0">🔄</span>
+                    <p className="text-[11px] text-orange-300 leading-relaxed">
+                        <strong>Reverse Engineering Mode is ON.</strong> AI BUY signals → executed as SELL, AI SELL signals → executed as BUY. SL and TP are swapped. AI predictions in the Signals tab are unchanged.
+                    </p>
+                </div>
+            )}
+
+            {/* Start/Stop button row */}
+            <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div>
                     <div className="text-sm font-bold text-crypto-heading">
                         {isLive ? '💰 Live' : '📄 Paper'} Automation
                     </div>
-                    <div className={`text-[10px] mt-0.5 font-semibold flex items-center gap-1 ${isRunning ? 'text-emerald-400' : 'text-crypto-muted'}`}>
+                    <div className={`text-[10px] mt-0.5 font-semibold flex items-center gap-1 ${isRunning ? (isReversed ? 'text-orange-400' : 'text-emerald-400') : 'text-crypto-muted'}`}>
                         {isRunning
-                            ? <><span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Running</>
+                            ? <><span className={`inline-block w-1.5 h-1.5 rounded-full animate-pulse ${isReversed ? 'bg-orange-400' : 'bg-emerald-400'}`} />{isReversed ? 'Running (Reversed)' : 'Running'}</>
                             : <><span className="inline-block w-1.5 h-1.5 rounded-full bg-crypto-border" /> Stopped</>
                         }
                     </div>
                 </div>
-                <button
-                    onClick={() => onToggle(mode, !isRunning)}
-                    disabled={toggling}
-                    className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                        isRunning
-                            ? 'bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20'
-                            : isLive
-                                ? 'bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20'
-                                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
-                    }`}
-                >
-                    {toggling
-                        ? (isRunning ? '⏳ Stopping…' : '⏳ Starting…')
-                        : (isRunning ? '⏹ Stop Automation' : '▶ Start AI Automation')
-                    }
-                </button>
+
+                <div className="flex items-center gap-2 flex-wrap justify-end">
+                    {/* Normal start/stop */}
+                    <button
+                        onClick={() => onToggle(mode, !isRunning)}
+                        disabled={toggling || reverseToggling}
+                        className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                            isRunning
+                                ? 'bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20'
+                                : isLive
+                                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20'
+                                    : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
+                        }`}
+                    >
+                        {toggling
+                            ? (isRunning ? '⏳ Stopping…' : '⏳ Starting…')
+                            : (isRunning && !isReversed ? '⏹ Stop' : '▶ Start Normal')
+                        }
+                    </button>
+
+                    {/* Reverse Engineering start/stop */}
+                    <button
+                        onClick={() => onToggleReverse(mode, !isRunning || !isReversed)}
+                        disabled={toggling || reverseToggling}
+                        title="Reverse Engineering Mode: AI BUY → executed SELL, AI SELL → executed BUY"
+                        className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                            isRunning && isReversed
+                                ? 'bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20'
+                                : 'bg-orange-500/10 text-orange-400 border-orange-500/30 hover:bg-orange-500/20'
+                        }`}
+                    >
+                        {reverseToggling ? '⏳…' : isRunning && isReversed ? '⏹ Stop Reverse' : '🔄 Start Reversed'}
+                    </button>
+                </div>
+            </div>
+
+            {/* ── Reverse Engineering Mode explanation card ── */}
+            <div className={`rounded-xl border px-3 py-3 space-y-2 transition-all ${
+                isReversed
+                    ? 'bg-orange-500/10 border-orange-500/30'
+                    : 'bg-crypto-bg-subtle border-crypto-border/40'
+            }`}>
+                <div className="flex items-center justify-between">
+                    <div>
+                        <div className="text-xs font-bold text-crypto-heading flex items-center gap-1.5">
+                            🔄 Reverse Engineering Mode
+                            {isReversed && <span className="text-[10px] font-semibold text-orange-400 bg-orange-500/15 border border-orange-500/30 px-1.5 py-0.5 rounded-full">ACTIVE</span>}
+                        </div>
+                        <div className="text-[10px] text-crypto-muted mt-0.5 leading-relaxed">
+                            When active: AI predicts BUY → system executes SELL, and vice-versa. Stop-loss and target are also swapped. AI signal records are unaffected.
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            update('reverseMode', !cfg.reverseMode);
+                            // Auto-save toggle immediately
+                            onSave(mode, { ...cfg, reverseMode: !cfg.reverseMode }).catch(() => {});
+                        }}
+                        className={`relative w-10 h-5 rounded-full transition-colors duration-200 flex-shrink-0 ml-3 ${cfg.reverseMode ? 'bg-orange-500' : 'bg-crypto-border'}`}
+                    >
+                        <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${cfg.reverseMode ? 'translate-x-5' : 'translate-x-0'}`} />
+                    </button>
+                </div>
+                {cfg.reverseMode && (
+                    <div className="text-[10px] text-orange-300 leading-relaxed">
+                        ⚡ Enabled. Use the <strong>"🔄 Start Reversed"</strong> button above to start automation in reverse mode, or <strong>"▶ Start Normal"</strong> to run normally (override).
+                    </div>
+                )}
             </div>
 
             <div className="border-t border-crypto-border/30 pt-4 space-y-4">
@@ -214,6 +277,7 @@ function ModePanel({ mode, status, config, onSave, onToggle, toggling = false })
                     <div>🎯 Min confidence: <strong className="text-crypto-heading">{cfg.minConfidence || 70}%</strong></div>
                     <div>⚡ Leverage: AI picks <strong className="text-crypto-heading">{cfg.minLeverage || 10}–{cfg.maxLeverage || 20}×</strong></div>
                     <div>⛔ Pauses if balance &lt; <strong className="text-crypto-heading">${minThreshold}</strong></div>
+                    {cfg.reverseMode && <div className="text-orange-400 font-semibold">🔄 Reverse Engineering Mode: ON</div>}
                 </div>
 
                 {/* Save */}
@@ -239,11 +303,12 @@ function ModePanel({ mode, status, config, onSave, onToggle, toggling = false })
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 const AutomationSettings = () => {
-    const [tab, setTab]           = useState('paper');
-    const [status, setStatus]     = useState({ paper: { running: false, config: {} }, live: { running: false, config: {} } });
-    const [loading, setLoading]   = useState(true);
-    const [toggling, setToggling] = useState(false);
-    const [toggleMsg, setToggleMsg] = useState('');
+    const [tab, setTab]               = useState('paper');
+    const [status, setStatus]         = useState({ paper: { running: false, config: {} }, live: { running: false, config: {} } });
+    const [loading, setLoading]       = useState(true);
+    const [toggling, setToggling]     = useState(false);
+    const [reverseToggling, setRevToggling] = useState(false);
+    const [toggleMsg, setToggleMsg]   = useState('');
 
     const loadStatus = useCallback(async () => {
         try {
@@ -268,16 +333,17 @@ const AutomationSettings = () => {
         setToggleMsg(start ? '⏳ Starting…' : '⏳ Stopping…');
         try {
             if (start) {
-                await api.post('/automation/start', { mode });
-                // Optimistically flip the button immediately, then sync from server
-                setStatus(prev => ({ ...prev, [mode]: { ...prev[mode], running: true } }));
-                setToggleMsg('✓ Automation started');
+                // /reverse with enable=false for reverseMode means: start with reverseMode=false (normal)
+                // Reuse the atomic endpoint: stop → set reverseMode=false → start
+                await api.post('/automation/reverse', { mode, enable: false });  // stop + clear flag
+                await api.post('/automation/start', { mode });                   // start fresh (normal)
+                setStatus(prev => ({ ...prev, [mode]: { ...prev[mode], running: true, config: { ...prev[mode]?.config, reverseMode: false } } }));
+                setToggleMsg('✓ Automation started (normal mode)');
             } else {
                 await api.post('/automation/stop', { mode });
                 setStatus(prev => ({ ...prev, [mode]: { ...prev[mode], running: false } }));
                 setToggleMsg('✓ Automation stopped');
             }
-            // Sync full config from server in background
             loadStatus().catch(() => {});
         } catch (err) {
             const detail = err?.response?.data?.error || err.message || 'Unknown error';
@@ -285,6 +351,31 @@ const AutomationSettings = () => {
             console.error('Toggle failed', detail);
         } finally {
             setToggling(false);
+            setTimeout(() => setToggleMsg(''), 5000);
+        }
+    };
+
+    const handleToggleReverse = async (mode, start) => {
+        setRevToggling(true);
+        setToggleMsg(start ? '⏳ Starting in Reverse Mode…' : '⏳ Stopping…');
+        try {
+            // Single atomic endpoint: stops engine → saves reverseMode → restarts
+            await api.post('/automation/reverse', { mode, enable: start });
+
+            if (start) {
+                setStatus(prev => ({ ...prev, [mode]: { ...prev[mode], running: true, config: { ...prev[mode]?.config, reverseMode: true } } }));
+                setToggleMsg('✓ Reverse Engineering Mode started 🔄');
+            } else {
+                setStatus(prev => ({ ...prev, [mode]: { ...prev[mode], running: false, config: { ...prev[mode]?.config, reverseMode: false } } }));
+                setToggleMsg('✓ Automation stopped');
+            }
+            loadStatus().catch(() => {});
+        } catch (err) {
+            const detail = err?.response?.data?.error || err.message || 'Unknown error';
+            setToggleMsg(`⚠ ${detail}`);
+            console.error('Reverse toggle failed', detail);
+        } finally {
+            setRevToggling(false);
             setTimeout(() => setToggleMsg(''), 5000);
         }
     };
@@ -325,7 +416,7 @@ const AutomationSettings = () => {
                     >
                         {m === 'live' ? '💰' : '📄'} {m.charAt(0).toUpperCase() + m.slice(1)} Trading
                         {status[m]?.running && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${status[m]?.config?.reverseMode ? 'bg-orange-400' : 'bg-emerald-400'}`} />
                         )}
                     </button>
                 ))}
@@ -349,7 +440,9 @@ const AutomationSettings = () => {
                     config={status[tab]?.config}
                     onSave={handleSave}
                     onToggle={handleToggle}
+                    onToggleReverse={handleToggleReverse}
                     toggling={toggling}
+                    reverseToggling={reverseToggling}
                 />
             </div>
         </div>

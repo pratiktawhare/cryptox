@@ -100,6 +100,7 @@ router.patch('/settings', async (req, res) => {
         'intervalMinutes', 'estimatedWalletUSD', 'tradePct',
         'minConfidence', 'minLeverage', 'maxLeverage',
         'trailStopLoss', 'dailyReportEnabled', 'dailyReportTime',
+        'reverseMode',   // Reverse Engineering Mode flag
     ];
 
     const update = {};
@@ -117,12 +118,48 @@ router.patch('/settings', async (req, res) => {
         );
 
         // If automation is running and interval changed, restart to pick up new interval
-        const isRunning = automationEngine.getStatus()[mode];
+        const engineStatus = automationEngine.getStatus();
+        const isRunning = typeof engineStatus[mode] === 'object' ? !!engineStatus[mode].running : !!engineStatus[mode];
         if (isRunning && settings.intervalMinutes !== undefined) {
             await automationEngine.restartMode(mode);
         }
 
         res.json({ success: true, config: prefs[`${mode}Auto`] });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── POST /api/automation/reverse ─────────────────────────────────────────────
+// Atomically sets reverseMode and (re)starts automation in one step.
+// Avoids the race condition of PATCH-then-start with an already-running engine.
+router.post('/reverse', async (req, res) => {
+    const { mode, enable } = req.body;  // enable: true = start reversed, false = stop
+    if (!['paper', 'live'].includes(mode)) {
+        return res.status(400).json({ error: 'mode must be "paper" or "live"' });
+    }
+
+    try {
+        if (enable) {
+            // 1. Save reverseMode=true and enabled=true atomically
+            await UserPreferences.updateMany(
+                {},
+                { $set: { [`${mode}Auto.reverseMode`]: true, [`${mode}Auto.enabled`]: true } }
+            );
+            // 2. Stop first (if running) so startMode picks up fresh prefs
+            await automationEngine.stopMode(mode);
+            // 3. Start — now reads reverseMode=true from DB
+            await automationEngine.startMode(mode);
+            res.json({ success: true, mode, running: true, reverseMode: true });
+        } else {
+            // Stop and clear the flag
+            await automationEngine.stopMode(mode);
+            await UserPreferences.updateMany(
+                {},
+                { $set: { [`${mode}Auto.reverseMode`]: false, [`${mode}Auto.enabled`]: false } }
+            );
+            res.json({ success: true, mode, running: false, reverseMode: false });
+        }
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
