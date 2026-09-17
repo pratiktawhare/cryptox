@@ -165,6 +165,10 @@ async function start() {
             console.log('[AutomationEngine] Restoring live automation after restart…');
             automationEngine.startMode('live');
         }
+        // Recover any daily reports that were missed while server was down
+        automationEngine._recoverMissedReports().catch(e =>
+            console.warn('[AutomationEngine] Report recovery error:', e.message)
+        );
     } catch (e) {
         console.warn('[AutomationEngine] Could not restore automation state:', e.message);
     }

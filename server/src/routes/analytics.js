@@ -1,27 +1,40 @@
-/**
- * routes/analytics.js
- *
- * Phase 9 — Risk, Analytics & Self-Learning
- *
- * GET /api/analytics/performance      — Overall win rate, PnL, equity curve
- * GET /api/analytics/signals          — Signal accuracy breakdown
- * GET /api/analytics/learning         — Self-learning insights per symbol
- * GET /api/analytics/equity-curve     — Equity curve data points (paper + live)
- * GET /api/analytics/best-worst       — Best and worst trades
- * GET /api/analytics/heatmap          — Win rate by symbol × time-of-day
- */
-
 const express = require('express');
 const authenticate = require('../middleware/auth');
 const AiCorrection = require('../models/AiCorrection');
 const TradeHistory = require('../models/TradeHistory');
 const PaperWallet  = require('../models/PaperWallet');
 const PaperPosition = require('../models/PaperPosition');
+const ApiKey        = require('../models/ApiKey');
 const selfLearning  = require('../services/ai/SelfLearning');
 const paperEngine   = require('../services/trading/PaperTradingEngine');
+const DeltaOrderClient = require('../services/trading/DeltaOrderClient');
+const { decryptData }  = require('../utils/encryption');
 
 const router = express.Router();
 router.use(authenticate);
+
+// ── Helper: build authenticated Delta client for a user ──────────────────────
+async function buildDeltaClient(userId) {
+    const keyDoc = await ApiKey.findOne({ userId, exchange: 'delta', isActive: true });
+    if (!keyDoc) return null;
+    const apiKey    = decryptData(keyDoc.apiKeyEncrypted);
+    const apiSecret = decryptData(keyDoc.apiSecretEncrypted);
+    return new DeltaOrderClient(apiKey, apiSecret);
+}
+
+// ── Helper: parse Delta wallet response into usable fields ───────────────────
+function parseDeltaWallet(walletData) {
+    try {
+        const result = walletData?.result || [];
+        // Delta returns array of asset balances; find USDT (the main margin asset)
+        const usdt = result.find(w => w.asset_symbol === 'USDT') || result[0] || {};
+        const balance   = parseFloat(usdt.balance         || usdt.wallet_balance  || 0);
+        const available = parseFloat(usdt.available_balance                        || 0);
+        const blocked   = parseFloat(usdt.position_margin || usdt.blocked_margin  || 0);
+        const unrealised= parseFloat(usdt.unrealised_cashflow || usdt.upl         || 0);
+        return { balance, available, blocked, unrealised, raw: usdt };
+    } catch { return null; }
+}
 
 // ── Overall performance summary ───────────────────────────────────────────────
 router.get('/performance', async (req, res) => {
@@ -31,15 +44,13 @@ router.get('/performance', async (req, res) => {
         // Paper wallet stats
         const paperWallet = await paperEngine.getWallet(userId);
 
-        // Live trade history stats
+        // Live trade history stats (closed trades)
         const liveTrades = await TradeHistory.find({ userId, mode: { $ne: 'paper' }, status: 'filled' }).lean();
         const liveWins   = liveTrades.filter(t => t.realisedPnl > 0).length;
         const livePnl    = liveTrades.reduce((s, t) => s + (t.realisedPnl || 0), 0);
 
         // Paper trade history
         const paperTrades = await PaperPosition.find({ userId, status: { $ne: 'open' } }).lean();
-        const paperWins   = paperTrades.filter(t => t.realisedPnl > 0).length;
-        const paperPnl    = paperTrades.reduce((s, t) => s + (t.realisedPnl || 0), 0);
 
         // Signal accuracy
         const corrections = await AiCorrection.find().sort({ createdAt: -1 }).limit(200).lean();
@@ -49,6 +60,22 @@ router.get('/performance', async (req, res) => {
         const avgRR    = corrections.length
             ? (corrections.reduce((s, c) => s + (c.rrAchieved || 0), 0) / corrections.length).toFixed(2)
             : null;
+
+        // Live wallet from Delta Exchange (best-effort, non-blocking)
+        let liveWallet = null;
+        try {
+            const client = await buildDeltaClient(userId);
+            if (client) {
+                const walletData = await client.getWallet();
+                liveWallet = parseDeltaWallet(walletData);
+            }
+        } catch (e) {
+            console.warn('[Analytics] Could not fetch live Delta wallet:', e.message);
+        }
+
+        // All-time stats from closed live trades
+        const liveAllTrades = await TradeHistory.find({ userId, mode: { $ne: 'paper' } }).lean();
+        const livePending   = liveAllTrades.filter(t => ['open', 'pending'].includes(t.status)).length;
 
         res.json({
             paper: {
@@ -65,10 +92,19 @@ router.get('/performance', async (req, res) => {
                 totalLosses: paperWallet?.totalLosses    ?? 0,
             },
             live: {
-                totalTrades: liveTrades.length,
-                wins:        liveWins,
-                winRate:     liveTrades.length > 0 ? ((liveWins / liveTrades.length) * 100).toFixed(1) : null,
-                totalPnl:    livePnl.toFixed(2),
+                // Real-time Delta Exchange wallet data
+                balance:       liveWallet?.balance    ?? null,
+                available:     liveWallet?.available  ?? null,
+                blocked:       liveWallet?.blocked    ?? null,
+                unrealisedPnl: liveWallet?.unrealised ?? null,
+                hasWallet:     liveWallet !== null,
+                // Historical trade stats
+                totalTrades:   liveTrades.length,
+                openPositions: livePending,
+                wins:          liveWins,
+                losses:        liveTrades.length - liveWins,
+                winRate:       liveTrades.length > 0 ? parseFloat(((liveWins / liveTrades.length) * 100).toFixed(1)) : null,
+                totalPnl:      parseFloat(livePnl.toFixed(2)),
             },
             signals: {
                 total:   sigTotal,
@@ -81,6 +117,44 @@ router.get('/performance', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
+// ── On-demand live wallet refresh ─────────────────────────────────────────────
+router.get('/live-wallet', async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const client = await buildDeltaClient(userId);
+        if (!client) {
+            return res.status(404).json({ error: 'No active Delta Exchange API key found.' });
+        }
+        const [walletData, positionsData] = await Promise.allSettled([
+            client.getWallet(),
+            client.getPositions(),
+        ]);
+
+        const wallet    = parseDeltaWallet(walletData.value);
+        const positions = positionsData.status === 'fulfilled'
+            ? (positionsData.value?.result || [])
+            : [];
+
+        res.json({
+            wallet,
+            openPositions: positions.map(p => ({
+                symbol:        p.product_symbol,
+                side:          p.size > 0 ? 'buy' : 'sell',
+                size:          Math.abs(p.size),
+                entryPrice:    parseFloat(p.entry_price || 0),
+                markPrice:     parseFloat(p.mark_price  || 0),
+                unrealisedPnl: parseFloat(p.unrealised_cashflow || p.upl || 0),
+                margin:        parseFloat(p.initial_margin || 0),
+                leverage:      p.leverage,
+            })),
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
 
 // ── Equity curve data ─────────────────────────────────────────────────────────
 router.get('/equity-curve', async (req, res) => {

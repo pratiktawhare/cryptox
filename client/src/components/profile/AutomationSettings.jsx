@@ -3,21 +3,33 @@ import api from '../../services/api';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function SliderField({ label, hint, value, min, max, step = 1, unit = '', onChange }) {
+function NumberField({ label, hint, value, min, max, step = 1, unit = '', onChange }) {
+    const [raw, setRaw] = useState(String(value ?? ''));
+
+    useEffect(() => { setRaw(String(value ?? '')); }, [value]);
+
+    const commit = () => {
+        const n = parseFloat(raw);
+        if (isNaN(n)) { setRaw(String(value ?? '')); return; }
+        const clamped = max != null ? Math.min(max, Math.max(min ?? 0, n)) : Math.max(min ?? 0, n);
+        setRaw(String(clamped));
+        onChange(clamped);
+    };
+
     return (
         <div>
             <div className="flex items-center justify-between mb-1">
                 <label className="text-xs text-crypto-heading font-medium">{label}</label>
-                <span className="text-xs font-bold text-crypto-primary tabular-nums">
-                    {value}{unit}
-                </span>
+                {unit && <span className="text-[10px] text-crypto-muted">{unit}</span>}
             </div>
             <input
-                type="range"
+                type="number"
                 min={min} max={max} step={step}
-                value={value}
-                onChange={e => onChange(Number(e.target.value))}
-                className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-crypto-border accent-crypto-primary"
+                value={raw}
+                onChange={e => setRaw(e.target.value)}
+                onBlur={commit}
+                onKeyDown={e => e.key === 'Enter' && commit()}
+                className="w-full text-xs px-3 py-2 rounded-lg bg-crypto-input border border-crypto-border text-crypto-heading focus:outline-none focus:ring-1 focus:ring-crypto-primary/30 focus:border-crypto-primary transition-all tabular-nums"
             />
             {hint && <p className="text-[10px] text-crypto-muted mt-0.5">{hint}</p>}
         </div>
@@ -52,8 +64,27 @@ function ModePanel({ mode, status, config, onSave, onToggle, onToggleReverse, to
     const [cfg, setCfg]   = useState(config || {});
     const [saving, setSaving] = useState(false);
     const [msg, setMsg]   = useState('');
+    const [liveWallet, setLiveWallet] = useState(null);
+    const [walletLoading, setWalletLoading] = useState(false);
 
     useEffect(() => { setCfg(config || {}); }, [config]);
+
+    // Auto-fetch live wallet when on live tab
+    useEffect(() => {
+        if (isLive) fetchLiveWallet();
+    }, [isLive]);
+
+    const fetchLiveWallet = async () => {
+        setWalletLoading(true);
+        try {
+            const res = await api.get('/analytics/live-wallet');
+            setLiveWallet(res.data);
+        } catch {
+            setLiveWallet(null);
+        } finally {
+            setWalletLoading(false);
+        }
+    };
 
     const update = (key, val) => setCfg(prev => ({ ...prev, [key]: val }));
 
@@ -72,7 +103,7 @@ function ModePanel({ mode, status, config, onSave, onToggle, onToggleReverse, to
     };
 
     const marginPerTrade = ((cfg.estimatedWalletUSD || 1000) * (cfg.tradePct || 20) / 100).toFixed(2);
-    const minThreshold   = ((cfg.estimatedWalletUSD || 1000) * 0.05).toFixed(2);
+    const minThresholdAmt = ((cfg.estimatedWalletUSD || 1000) * ((cfg.minBalancePct ?? 5) / 100)).toFixed(2);
 
     return (
         <div className={`space-y-4 ${isLive ? 'border border-amber-500/20 rounded-xl p-4 bg-amber-500/3' : ''}`}>
@@ -86,12 +117,64 @@ function ModePanel({ mode, status, config, onSave, onToggle, onToggleReverse, to
                 </div>
             )}
 
+            {/* Live wallet snapshot */}
+            {isLive && (
+                <div className="bg-crypto-bg-subtle border border-crypto-border/40 rounded-xl px-3 py-3">
+                    <div className="flex items-center justify-between mb-2">
+                        <span className="text-[11px] font-bold text-crypto-heading">💰 Delta Exchange Wallet</span>
+                        <button
+                            onClick={fetchLiveWallet}
+                            disabled={walletLoading}
+                            className="text-[10px] text-crypto-primary hover:text-crypto-primary/80 disabled:opacity-50 cursor-pointer"
+                        >
+                            {walletLoading ? '⏳ Refreshing…' : '↻ Refresh'}
+                        </button>
+                    </div>
+                    {liveWallet?.wallet ? (
+                        <div className="grid grid-cols-2 gap-2">
+                            {[
+                                { label: 'Balance', val: liveWallet.wallet.balance, prefix: '$' },
+                                { label: 'Available', val: liveWallet.wallet.available, prefix: '$' },
+                                { label: 'In Positions', val: liveWallet.wallet.blocked, prefix: '$' },
+                                { label: 'Unrealised PnL', val: liveWallet.wallet.unrealised, prefix: '$', color: liveWallet.wallet.unrealised >= 0 ? 'text-emerald-400' : 'text-red-400' },
+                            ].map(({ label, val, prefix, color }) => (
+                                <div key={label} className="bg-crypto-bg rounded-lg px-2.5 py-2">
+                                    <div className="text-[9px] text-crypto-muted">{label}</div>
+                                    <div className={`text-xs font-bold tabular-nums ${color || 'text-crypto-heading'}`}>
+                                        {val != null ? `${prefix}${parseFloat(val).toFixed(4)}` : '—'}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="text-[10px] text-crypto-muted">
+                            {walletLoading ? 'Fetching from Delta Exchange…' : 'No API key found or unable to connect.'}
+                        </p>
+                    )}
+                    {liveWallet?.openPositions?.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                            <div className="text-[10px] font-semibold text-crypto-heading">Open Positions ({liveWallet.openPositions.length})</div>
+                            {liveWallet.openPositions.map((p, i) => (
+                                <div key={i} className="flex items-center justify-between text-[10px] px-2 py-1 bg-crypto-bg rounded-lg">
+                                    <span className="text-crypto-heading font-medium">{p.symbol}</span>
+                                    <span className={`font-semibold px-1.5 py-0.5 rounded text-[9px] ${p.side === 'buy' ? 'text-emerald-400 bg-emerald-500/10' : 'text-red-400 bg-red-500/10'}`}>{p.side.toUpperCase()}</span>
+                                    <span className="text-crypto-muted">{p.size} × {p.leverage}×</span>
+                                    <span className={p.unrealisedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                                        {p.unrealisedPnl >= 0 ? '+' : ''}${p.unrealisedPnl.toFixed(3)}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* Reverse Mode active banner */}
             {isReversed && isRunning && (
                 <div className="flex items-start gap-2 bg-orange-500/15 border border-orange-500/30 rounded-lg px-3 py-2.5 animate-pulse-slow">
                     <span className="text-orange-400 text-sm flex-shrink-0">🔄</span>
                     <p className="text-[11px] text-orange-300 leading-relaxed">
-                        <strong>Reverse Engineering Mode is ON.</strong> AI BUY signals → executed as SELL, AI SELL signals → executed as BUY. SL and TP are swapped. AI predictions in the Signals tab are unchanged.
+                        <strong>Reverse Engineering Mode is ON.</strong> AI BUY signals → executed as SELL, AI SELL signals → executed as BUY. SL and TP are swapped.
                     </p>
                 </div>
             )}
@@ -111,7 +194,6 @@ function ModePanel({ mode, status, config, onSave, onToggle, onToggleReverse, to
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap justify-end">
-                    {/* Normal start/stop */}
                     <button
                         onClick={() => onToggle(mode, !isRunning)}
                         disabled={toggling || reverseToggling}
@@ -129,7 +211,6 @@ function ModePanel({ mode, status, config, onSave, onToggle, onToggleReverse, to
                         }
                     </button>
 
-                    {/* Reverse Engineering start/stop */}
                     <button
                         onClick={() => onToggleReverse(mode, !isRunning || !isReversed)}
                         disabled={toggling || reverseToggling}
@@ -145,7 +226,7 @@ function ModePanel({ mode, status, config, onSave, onToggle, onToggleReverse, to
                 </div>
             </div>
 
-            {/* ── Reverse Engineering Mode explanation card ── */}
+            {/* Reverse Engineering Mode toggle card */}
             <div className={`rounded-xl border px-3 py-3 space-y-2 transition-all ${
                 isReversed
                     ? 'bg-orange-500/10 border-orange-500/30'
@@ -158,14 +239,13 @@ function ModePanel({ mode, status, config, onSave, onToggle, onToggleReverse, to
                             {isReversed && <span className="text-[10px] font-semibold text-orange-400 bg-orange-500/15 border border-orange-500/30 px-1.5 py-0.5 rounded-full">ACTIVE</span>}
                         </div>
                         <div className="text-[10px] text-crypto-muted mt-0.5 leading-relaxed">
-                            When active: AI predicts BUY → system executes SELL, and vice-versa. Stop-loss and target are also swapped. AI signal records are unaffected.
+                            When active: AI predicts BUY → system executes SELL, and vice-versa.
                         </div>
                     </div>
                     <button
                         type="button"
                         onClick={() => {
                             update('reverseMode', !cfg.reverseMode);
-                            // Auto-save toggle immediately
                             onSave(mode, { ...cfg, reverseMode: !cfg.reverseMode }).catch(() => {});
                         }}
                         className={`relative w-10 h-5 rounded-full transition-colors duration-200 flex-shrink-0 ml-3 ${cfg.reverseMode ? 'bg-orange-500' : 'bg-crypto-border'}`}
@@ -173,73 +253,71 @@ function ModePanel({ mode, status, config, onSave, onToggle, onToggleReverse, to
                         <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${cfg.reverseMode ? 'translate-x-5' : 'translate-x-0'}`} />
                     </button>
                 </div>
-                {cfg.reverseMode && (
-                    <div className="text-[10px] text-orange-300 leading-relaxed">
-                        ⚡ Enabled. Use the <strong>"🔄 Start Reversed"</strong> button above to start automation in reverse mode, or <strong>"▶ Start Normal"</strong> to run normally (override).
-                    </div>
-                )}
             </div>
 
             <div className="border-t border-crypto-border/30 pt-4 space-y-4">
 
                 {/* Interval */}
-                <SliderField
-                    label="Scan Interval"
+                <NumberField
+                    label="Scan Interval (minutes)"
                     hint={`AI scans every ${cfg.intervalMinutes || 30} minutes for a new trade`}
                     value={cfg.intervalMinutes || 30}
-                    min={15} max={240} step={15} unit=" min"
+                    min={1} step={1} unit="min"
                     onChange={v => update('intervalMinutes', v)}
                 />
 
                 {/* Estimated wallet */}
-                <div>
-                    <label className="text-xs text-crypto-heading font-medium block mb-1">Estimated Wallet Size (USD)</label>
-                    <input
-                        type="number"
-                        min={10} step={10}
-                        value={cfg.estimatedWalletUSD || 1000}
-                        onChange={e => update('estimatedWalletUSD', Number(e.target.value))}
-                        className="w-full text-xs px-3 py-2 rounded-lg bg-crypto-input border border-crypto-border text-crypto-heading focus:outline-none focus:ring-1 focus:ring-crypto-primary/30 focus:border-crypto-primary transition-all"
-                    />
-                    <p className="text-[10px] text-crypto-muted mt-0.5">
-                        Reference wallet size. Automation pauses when actual balance &lt; ${minThreshold} (5%).
-                    </p>
-                </div>
+                <NumberField
+                    label="Estimated Wallet Size"
+                    hint={`Margin per trade: ~$${marginPerTrade} (${cfg.tradePct || 20}% of wallet)`}
+                    value={cfg.estimatedWalletUSD || 1000}
+                    min={0} step={1} unit="USD"
+                    onChange={v => update('estimatedWalletUSD', v)}
+                />
 
                 {/* Trade % */}
-                <SliderField
+                <NumberField
                     label="Trade Size (% of wallet)"
-                    hint={`~$${marginPerTrade} margin per trade · Leverage amplifies position size`}
+                    hint={`~$${marginPerTrade} margin per trade at ${cfg.leverage || cfg.maxLeverage || 20}× leverage`}
                     value={cfg.tradePct || 20}
-                    min={5} max={80} unit="%"
+                    min={0} max={100} step={1} unit="%"
                     onChange={v => update('tradePct', v)}
                 />
 
                 {/* Min confidence */}
-                <SliderField
+                <NumberField
                     label="Minimum Confidence"
                     hint={`Only execute trades where AI confidence ≥ ${cfg.minConfidence || 70}%`}
                     value={cfg.minConfidence || 70}
-                    min={60} max={95} unit="%"
+                    min={0} max={100} step={1} unit="%"
                     onChange={v => update('minConfidence', v)}
                 />
 
                 {/* Leverage range */}
                 <div className="grid grid-cols-2 gap-3">
-                    <SliderField
+                    <NumberField
                         label="Min Leverage"
                         value={cfg.minLeverage || 10}
-                        min={2} max={cfg.maxLeverage || 20} unit="×"
-                        onChange={v => update('minLeverage', Math.min(v, cfg.maxLeverage || 20))}
+                        min={1} step={1} unit="×"
+                        onChange={v => update('minLeverage', v)}
                     />
-                    <SliderField
+                    <NumberField
                         label="Max Leverage"
                         value={cfg.maxLeverage || 20}
-                        min={cfg.minLeverage || 10} max={20} unit="×"
-                        onChange={v => update('maxLeverage', Math.max(v, cfg.minLeverage || 10))}
+                        min={1} step={1} unit="×"
+                        onChange={v => update('maxLeverage', v)}
                     />
                 </div>
                 <p className="text-[10px] text-crypto-muted -mt-2">AI picks leverage within this range based on setup quality</p>
+
+                {/* Min balance threshold */}
+                <NumberField
+                    label="Min Balance Threshold"
+                    hint={`Automation pauses if balance < $${minThresholdAmt} (${cfg.minBalancePct ?? 5}% of estimated wallet)`}
+                    value={cfg.minBalancePct ?? 5}
+                    min={0} max={100} step={1} unit="%"
+                    onChange={v => update('minBalancePct', v)}
+                />
 
                 {/* Trail SL */}
                 <Toggle
@@ -266,6 +344,7 @@ function ModePanel({ mode, status, config, onSave, onToggle, onToggleReverse, to
                             onChange={e => update('dailyReportTime', e.target.value)}
                             className="text-xs px-3 py-2 rounded-lg bg-crypto-input border border-crypto-border text-crypto-heading focus:outline-none focus:ring-1 focus:ring-crypto-primary/30 focus:border-crypto-primary transition-all"
                         />
+                        <p className="text-[10px] text-crypto-muted mt-0.5">Report fires within 30 minutes of this time (IST)</p>
                     </div>
                 )}
 
@@ -276,7 +355,7 @@ function ModePanel({ mode, status, config, onSave, onToggle, onToggleReverse, to
                     <div>💵 Margin per trade: <strong className="text-crypto-heading">${marginPerTrade}</strong> ({cfg.tradePct || 20}% of ${cfg.estimatedWalletUSD || 1000})</div>
                     <div>🎯 Min confidence: <strong className="text-crypto-heading">{cfg.minConfidence || 70}%</strong></div>
                     <div>⚡ Leverage: AI picks <strong className="text-crypto-heading">{cfg.minLeverage || 10}–{cfg.maxLeverage || 20}×</strong></div>
-                    <div>⛔ Pauses if balance &lt; <strong className="text-crypto-heading">${minThreshold}</strong></div>
+                    <div>⛔ Pauses if balance &lt; <strong className="text-crypto-heading">${minThresholdAmt}</strong> ({cfg.minBalancePct ?? 5}%)</div>
                     {cfg.reverseMode && <div className="text-orange-400 font-semibold">🔄 Reverse Engineering Mode: ON</div>}
                 </div>
 

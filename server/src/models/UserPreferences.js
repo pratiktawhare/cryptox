@@ -64,12 +64,13 @@ const preferencesSchema = new mongoose.Schema({
     paperAuto: {
         enabled:             { type: Boolean, default: false },
         reverseMode:         { type: Boolean, default: false }, // Flip BUY→SELL, swap SL↔TP
-        intervalMinutes:     { type: Number,  default: 30,   min: 15, max: 240 },
-        estimatedWalletUSD:  { type: Number,  default: 1000, min: 10 },
-        tradePct:            { type: Number,  default: 20,   min: 5,  max: 80  }, // % of estimatedWalletUSD → margin per trade
-        minConfidence:       { type: Number,  default: 70,   min: 60, max: 95  },
-        minLeverage:         { type: Number,  default: 10,   min: 2,  max: 20  },
-        maxLeverage:         { type: Number,  default: 20,   min: 2,  max: 20  },
+        intervalMinutes:     { type: Number,  default: 30,  min: 1 },
+        estimatedWalletUSD:  { type: Number,  default: 1000, min: 0 },
+        tradePct:            { type: Number,  default: 20,  min: 0, max: 100 }, // % of estimatedWalletUSD → margin per trade
+        minBalancePct:       { type: Number,  default: 5,   min: 0, max: 100 }, // pause if balance < X% of estimatedWalletUSD
+        minConfidence:       { type: Number,  default: 70,  min: 0, max: 100 },
+        minLeverage:         { type: Number,  default: 10,  min: 1 },
+        maxLeverage:         { type: Number,  default: 20,  min: 1 },
         trailStopLoss:       { type: Boolean, default: true },
         dailyReportEnabled:  { type: Boolean, default: true },
         dailyReportTime:     { type: String,  default: '23:59' }, // HH:MM IST
@@ -81,12 +82,13 @@ const preferencesSchema = new mongoose.Schema({
     liveAuto: {
         enabled:             { type: Boolean, default: false },
         reverseMode:         { type: Boolean, default: false }, // Flip BUY→SELL, swap SL↔TP
-        intervalMinutes:     { type: Number,  default: 30,   min: 15, max: 240 },
-        estimatedWalletUSD:  { type: Number,  default: 1000, min: 10 },
-        tradePct:            { type: Number,  default: 20,   min: 5,  max: 80  },
-        minConfidence:       { type: Number,  default: 75,   min: 60, max: 95  }, // stricter default for real money
-        minLeverage:         { type: Number,  default: 10,   min: 2,  max: 20  },
-        maxLeverage:         { type: Number,  default: 20,   min: 2,  max: 20  },
+        intervalMinutes:     { type: Number,  default: 30,  min: 1 },
+        estimatedWalletUSD:  { type: Number,  default: 1000, min: 0 },
+        tradePct:            { type: Number,  default: 20,  min: 0, max: 100 },
+        minBalancePct:       { type: Number,  default: 5,   min: 0, max: 100 }, // pause if balance < X% of estimatedWalletUSD
+        minConfidence:       { type: Number,  default: 75,  min: 0, max: 100 }, // stricter default for real money
+        minLeverage:         { type: Number,  default: 10,  min: 1 },
+        maxLeverage:         { type: Number,  default: 20,  min: 1 },
         trailStopLoss:       { type: Boolean, default: true },
         dailyReportEnabled:  { type: Boolean, default: true },
         dailyReportTime:     { type: String,  default: '23:59' },

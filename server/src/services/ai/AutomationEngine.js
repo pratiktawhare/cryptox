@@ -146,7 +146,8 @@ class AutomationEngine {
 
         // ── Balance check ────────────────────────────────────────────────────
         const walletBalance = await this._getBalance(mode, prefs);
-        const minBalance    = (cfg.estimatedWalletUSD || 100) * 0.05;
+        const minBalancePct = (cfg.minBalancePct ?? 5) / 100;
+        const minBalance    = (cfg.estimatedWalletUSD || 100) * minBalancePct;
 
         if (walletBalance !== null && walletBalance < minBalance) {
             console.log(`[AutomationEngine] ⚠ ${mode} balance $${walletBalance.toFixed(2)} < $${minBalance.toFixed(2)} minimum — skipping`);
@@ -248,7 +249,24 @@ class AutomationEngine {
         const entry = execSignal.entry || execSignal.entryPrice || 0;
         if (entry > 0) {
             const marginPerContract = entry / leverage;
-            execSignal.quantity = Math.max(1, Math.floor(marginBudget / marginPerContract));
+            const rawQty = Math.floor(marginBudget / marginPerContract);
+
+            if (rawQty < 1) {
+                // Even 1 contract costs more than our budget — skip this coin
+                const cost1 = marginPerContract.toFixed(2);
+                const reason = `Insufficient margin: 1 contract of ${execSignal.symbol} costs $${cost1} but budget is $${marginBudget.toFixed(2)}`;
+                console.log(`[AutomationEngine] ⛔ ${mode} ${reason}`);
+                await AutomationLog.create({
+                    mode, date, cycleAction: 'SKIPPED_BALANCE',
+                    symbol: execSignal.symbol, confidence: signal.confidence,
+                    entryPrice: entry, leverage, marginUsed: marginPerContract,
+                    notes: reason,
+                });
+                this._emit('automation_cycle', { mode, action: 'SKIPPED_BALANCE', reason, nextCycleAt: this._nextCycleAt[mode] });
+                return;
+            }
+
+            execSignal.quantity = rawQty;
         }
 
         const actualMargin = entry > 0
@@ -485,14 +503,23 @@ class AutomationEngine {
 
     async _checkDailyReports() {
         try {
-            const currentTime = istTimeStr(); // 'HH:MM'
-            const date        = istDateStr();
-            const prefs       = await this._loadPrefs();
+            const now  = nowIST();
+            const date = istDateStr();
+            const prefs = await this._loadPrefs();
 
             for (const mode of ['paper', 'live']) {
                 const cfg = prefs[`${mode}Auto`];
                 if (!cfg?.dailyReportEnabled) continue;
-                if (cfg.dailyReportTime !== currentTime) continue;
+                if (!cfg.dailyReportTime) continue;
+
+                // Parse configured report time (HH:MM IST)
+                const [rh, rm] = cfg.dailyReportTime.split(':').map(Number);
+                const reportMinutes = rh * 60 + rm;
+                const nowMinutes    = now.getUTCHours() * 60 + now.getUTCMinutes();
+
+                // Fire if current time is within [reportTime, reportTime + 30 min]
+                const inWindow = nowMinutes >= reportMinutes && nowMinutes < reportMinutes + 30;
+                if (!inWindow) continue;
 
                 // Check if already generated for today
                 const existing = await DailyReport.findOne({ date, mode });
@@ -505,11 +532,41 @@ class AutomationEngine {
         }
     }
 
+    /** Called on server startup — generates any missed reports from today */
+    async _recoverMissedReports() {
+        try {
+            const now  = nowIST();
+            const date = istDateStr();
+            const prefs = await this._loadPrefs();
+
+            for (const mode of ['paper', 'live']) {
+                const cfg = prefs[`${mode}Auto`];
+                if (!cfg?.dailyReportEnabled) continue;
+                if (!cfg.dailyReportTime) continue;
+
+                const [rh, rm] = cfg.dailyReportTime.split(':').map(Number);
+                const reportMinutes = rh * 60 + rm;
+                const nowMinutes    = now.getUTCHours() * 60 + now.getUTCMinutes();
+
+                // If we're past the report time today and it hasn't been sent
+                if (nowMinutes < reportMinutes) continue;
+
+                const existing = await DailyReport.findOne({ date, mode });
+                if (existing?.notified) continue;
+
+                console.log(`[AutomationEngine] 🔄 Recovering missed ${mode} daily report for ${date}`);
+                await this._generateDailyReport(mode, date, prefs);
+            }
+        } catch (err) {
+            console.error('[AutomationEngine] _recoverMissedReports error:', err.message);
+        }
+    }
+
     async _generateDailyReport(mode, date, prefs) {
         console.log(`[AutomationEngine] 📊 Generating ${mode} daily report for ${date}`);
 
         const logs = await AutomationLog.find({ mode, date });
-        if (logs.length === 0) return;
+        // Build report even when logs.length === 0 (zero-activity day)
 
         const tradeLogs = logs.filter(l => ['BUY','SELL'].includes(l.cycleAction));
 

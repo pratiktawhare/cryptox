@@ -122,6 +122,11 @@ class DeltaOrderClient {
             body.reduce_only = true;
         }
 
+        // Set leverage explicitly so Delta uses the configured value, not account default
+        if (leverage) {
+            body.leverage = leverage.toString();
+        }
+
         // Limit price
         if (orderType === 'limit_order' && price) {
             body.limit_price = price.toString();
