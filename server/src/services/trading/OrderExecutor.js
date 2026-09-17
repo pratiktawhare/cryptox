@@ -178,8 +178,8 @@ class OrderExecutor {
             errors.push('Stop loss is required for all orders');
         }
 
-        // R/R ratio check
-        if (params.stopLoss && params.takeProfit && params.price) {
+        // R/R ratio check — skip for automation (reverse mode intentionally inverts R/R)
+        if (params.source !== 'automation' && params.stopLoss && params.takeProfit && params.price) {
             const risk   = Math.abs(params.price - params.stopLoss);
             const reward = Math.abs(params.takeProfit - params.price);
             const rr     = risk > 0 ? reward / risk : 0;
