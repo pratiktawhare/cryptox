@@ -42,7 +42,7 @@ const tradeHistorySchema = new mongoose.Schema({
     // Source
     mode:        { type: String, enum: ['live', 'paper'], default: 'live' },
     signalId:    { type: mongoose.Schema.Types.ObjectId, ref: 'TradeSignal', default: null },
-    source:      { type: String, enum: ['signal', 'manual', 'paper'], default: 'signal' },
+    source:      { type: String, enum: ['signal', 'manual', 'paper', 'automation'], default: 'signal' },
 
     // Error (if failed)
     errorMessage: { type: String, default: null },
