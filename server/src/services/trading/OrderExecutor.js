@@ -169,9 +169,6 @@ class OrderExecutor {
         if (params.size < SAFETY.MIN_ORDER_SIZE) {
             errors.push(`Order size ${params.size} is below minimum (${SAFETY.MIN_ORDER_SIZE})`);
         }
-        if (params.size > SAFETY.MAX_ORDER_SIZE) {
-            errors.push(`Order size ${params.size} exceeds maximum (${SAFETY.MAX_ORDER_SIZE})`);
-        }
 
         // Stop loss required
         if (SAFETY.REQUIRE_SL && !params.stopLoss) {
