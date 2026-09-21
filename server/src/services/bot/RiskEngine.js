@@ -64,16 +64,9 @@ function calcRisk(params) {
 
     const isLong = direction === 'long';
 
-    // ── Step 0: Pre-trade daily/consecutive loss gates ────────────────────────
+    // ── Step 0: Pre-trade consecutive loss & cooldown gates ───────────────────
     if (dailyStats) {
-        const { dailyLoss, consecutiveLosses, cooldownUntil } = dailyStats;
-        const effectiveBudgetForLimit = Math.min(config.budgetUSDT, actualAvailableBalance);
-
-        // Daily loss limit
-        const maxDailyLoss = effectiveBudgetForLimit * (config.maxDailyLossPct / 100);
-        if (dailyLoss >= maxDailyLoss) {
-            return fail(`Daily loss limit reached: $${dailyLoss.toFixed(4)} / $${maxDailyLoss.toFixed(4)}`);
-        }
+        const { consecutiveLosses, cooldownUntil } = dailyStats;
 
         // Consecutive losses
         if (consecutiveLosses >= config.maxConsecutiveLosses) {
@@ -257,12 +250,6 @@ function fail(reason) {
  * @returns {{ ok: boolean, reason: string|null }}
  */
 function checkDailyLimits(config, actualAvailableBalance, dailyStats) {
-    const effectiveBudget = Math.min(config.budgetUSDT || 10, actualAvailableBalance);
-    const maxDailyLoss    = effectiveBudget * (config.maxDailyLossPct / 100);
-
-    if (dailyStats.dailyLoss >= maxDailyLoss) {
-        return { ok: false, reason: `Daily loss limit: $${dailyStats.dailyLoss.toFixed(4)} / $${maxDailyLoss.toFixed(4)}` };
-    }
     if (dailyStats.consecutiveLosses >= config.maxConsecutiveLosses) {
         return { ok: false, reason: `Consecutive losses: ${dailyStats.consecutiveLosses}/${config.maxConsecutiveLosses}` };
     }
