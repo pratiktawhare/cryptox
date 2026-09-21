@@ -15,7 +15,7 @@ const config = require('../config/env');
 
 const PING_INTERVAL_MS     = 25_000;
 const RECONNECT_DELAY_MS   = 5_000;
-const BATCH_EMIT_INTERVAL  = 3_500;   // emit full ticker map every 3.5 s (smooth real-time & low bandwidth)
+const BATCH_EMIT_INTERVAL  = 2_000;   // emit full ticker map every 2 seconds
 const MAX_SYMBOLS_PER_MSG  = 50;      // Delta may have message size limits
 
 class DeltaWebSocketManager {
@@ -152,7 +152,7 @@ class DeltaWebSocketManager {
         if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
     }
 
-    /** Emit the full ticker map to all clients every 3.5 seconds (only if clients are connected) */
+    /** Emit the full ticker map to all clients every 2 seconds (only if clients are connected) */
     _startBatchEmit() {
         this._stopBatchEmit();
         this.batchTimer = setInterval(() => {

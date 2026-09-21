@@ -8,6 +8,7 @@ const TradingChart = ({ symbol, socket, isDarkMode, onNewOrder }) => {
     const containerRef = useRef(null);
     const chartRef = useRef(null);
     const seriesRef = useRef(null);
+    const lastCandleRef = useRef(null);
     const [resolution, setResolution] = useState('15m');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -90,6 +91,7 @@ const TradingChart = ({ symbol, socket, isDarkMode, onNewOrder }) => {
                         },
                     });
 
+                    lastCandleRef.current = { ...data[data.length - 1] };
                     series.setData(data);
                     chart.timeScale().fitContent();
                 } else {
@@ -109,31 +111,74 @@ const TradingChart = ({ symbol, socket, isDarkMode, onNewOrder }) => {
             chart.remove();
             chartRef.current = null;
             seriesRef.current = null;
+            lastCandleRef.current = null;
         };
     }, [symbol, resolution, isDarkMode]);
 
-    // ── Live candle updates ──
+    // ── Live candle & price updates ──
     useEffect(() => {
         if (!socket || !seriesRef.current) return;
 
-        const handler = (data) => {
+        const updateLivePrice = (price) => {
+            if (!lastCandleRef.current || !seriesRef.current) return;
+            const p = parseFloat(price);
+            if (isNaN(p) || p <= 0) return;
+
+            const cur = lastCandleRef.current;
+            const updated = {
+                time: cur.time,
+                open: cur.open,
+                high: Math.max(cur.high, p),
+                low: Math.min(cur.low, p),
+                close: p,
+            };
+            lastCandleRef.current = updated;
+            try {
+                seriesRef.current.update(updated);
+            } catch (e) {
+                // series may be detached during symbol change
+            }
+        };
+
+        const handleCandle = (data) => {
             if (data.symbol === symbol && data.resolution === resolution) {
+                const candleObj = {
+                    time: data.time,
+                    open: data.open,
+                    high: data.high,
+                    low: data.low,
+                    close: data.close,
+                };
+                lastCandleRef.current = candleObj;
                 try {
-                    seriesRef.current.update({
-                        time: data.time,
-                        open: data.open,
-                        high: data.high,
-                        low: data.low,
-                        close: data.close,
-                    });
+                    seriesRef.current.update(candleObj);
                 } catch (e) {
                     // series may be detached during symbol change
                 }
             }
         };
 
-        socket.on('candle_update', handler);
-        return () => socket.off('candle_update', handler);
+        const handleTicker = (data) => {
+            if (data && data.symbol === symbol) {
+                updateLivePrice(data.price);
+            }
+        };
+
+        const handleBatch = (batch) => {
+            if (batch && batch[symbol]) {
+                updateLivePrice(batch[symbol].price);
+            }
+        };
+
+        socket.on('candle_update', handleCandle);
+        socket.on('ticker', handleTicker);
+        socket.on('market_ticker_batch', handleBatch);
+
+        return () => {
+            socket.off('candle_update', handleCandle);
+            socket.off('ticker', handleTicker);
+            socket.off('market_ticker_batch', handleBatch);
+        };
     }, [socket, symbol, resolution]);
 
     return (
