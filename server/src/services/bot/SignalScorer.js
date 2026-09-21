@@ -194,8 +194,16 @@ function scoreSignal(snapshot, regimeResult, minScore = 5, groqResult = null) {
         decision = 'NO_SETUP';
         reason = `Score ${score}/${effectiveMinScore} minimum not met for ${direction}`;
     } else if (!regimeOk) {
-        decision = 'REJECT';
-        reason = `Regime ${regime} does not allow ${direction} trades`;
+        // High technical score (>=6/8) confirms multi-timeframe indicator alignment,
+        // which safely qualifies the trade even if the regime classification was mildly hesitant (RANGING/UNCERTAIN).
+        // Dangerous HIGH_VOLATILITY (flash spike > 3% ATR) is always respected as a safety block.
+        if (score >= Math.max(effectiveMinScore, 6) && regime !== 'HIGH_VOLATILITY') {
+            decision = 'TRADE';
+            reason = `Score ${score}/8 overrides mild regime (${regime}) for ${direction}`;
+        } else {
+            decision = 'REJECT';
+            reason = `Regime ${regime} does not allow ${direction} trades`;
+        }
     } else {
         decision = 'TRADE';
         reason = `Score ${score}/8, regime ${regime}, direction ${direction}`;
