@@ -194,10 +194,10 @@ class BacktestEngine {
 
             // ── Evaluate new entry signal if no open position ────────────────
             if (!openPosition && currentBalance > 1.0) {
-                // Check safety gates (consecutive losses and cooldown)
+                // Check safety gates (cooldown)
                 const dailyStats = { dailyLoss, consecutiveLosses, cooldownUntil };
-                if (consecutiveLosses >= stratConfig.maxConsecutiveLosses || (candle.time * 1000) < cooldownUntil) {
-                    continue; // Skip this bar due to risk circuit breaker
+                if ((candle.time * 1000) < cooldownUntil) {
+                    continue; // Skip this bar due to cooldown
                 }
 
                 // Window of 35 candles for indicators

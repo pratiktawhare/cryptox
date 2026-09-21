@@ -64,14 +64,9 @@ function calcRisk(params) {
 
     const isLong = direction === 'long';
 
-    // ── Step 0: Pre-trade consecutive loss & cooldown gates ───────────────────
+    // ── Step 0: Pre-trade cooldown gate ──────────────────────────────────────
     if (dailyStats) {
-        const { consecutiveLosses, cooldownUntil } = dailyStats;
-
-        // Consecutive losses
-        if (consecutiveLosses >= config.maxConsecutiveLosses) {
-            return fail(`Consecutive loss limit reached: ${consecutiveLosses}/${config.maxConsecutiveLosses}`);
-        }
+        const { cooldownUntil } = dailyStats;
 
         // Cooldown
         if (cooldownUntil && Date.now() < cooldownUntil) {
@@ -250,9 +245,6 @@ function fail(reason) {
  * @returns {{ ok: boolean, reason: string|null }}
  */
 function checkDailyLimits(config, actualAvailableBalance, dailyStats) {
-    if (dailyStats.consecutiveLosses >= config.maxConsecutiveLosses) {
-        return { ok: false, reason: `Consecutive losses: ${dailyStats.consecutiveLosses}/${config.maxConsecutiveLosses}` };
-    }
     if (dailyStats.cooldownUntil && Date.now() < dailyStats.cooldownUntil) {
         const remainSec = Math.ceil((dailyStats.cooldownUntil - Date.now()) / 1000);
         return { ok: false, reason: `Cooldown: ${remainSec}s remaining` };
