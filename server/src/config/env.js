@@ -67,10 +67,27 @@ const config = {
     // Delta Exchange — centralised, no more magic strings
     deltaBaseUrl: process.env.DELTA_BASE_URL || 'https://api.india.delta.exchange',
     deltaWsUrl: process.env.DELTA_WS_URL || 'wss://public-socket.india.delta.exchange',
+
+    // ── TradingBot ────────────────────────────────────────────────────────
+    // Controls whether live orders can ever be sent.
+    //
+    // Live trading requires BOTH:
+    //   TRADING_MODE=live  AND  ENABLE_LIVE_TRADING=true
+    //
+    // If either is missing/wrong → paper simulation only (no real orders).
+    tradingMode:       process.env.TRADING_MODE        || 'paper',   // 'paper' | 'live'
+    enableLiveTrading: process.env.ENABLE_LIVE_TRADING === 'true',   // must be explicitly 'true'
 };
+
+/**
+ * Master guard — import this anywhere to check if live orders are allowed.
+ * Usage: if (!config.botLiveAllowed) { // simulate only }
+ */
+config.botLiveAllowed = config.tradingMode === 'live' && config.enableLiveTrading === true;
 
 // Validate critical config
 if (!config.jwtSecret) throw new Error('JWT_SECRET is required');
 if (!config.encryptionKey) throw new Error('ENCRYPTION_KEY is required');
 
 module.exports = config;
+

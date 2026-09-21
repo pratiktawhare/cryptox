@@ -3,6 +3,7 @@ const http = require('http');
 const cors = require('cors');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
+const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const { Server } = require('socket.io');
 const config = require('./config/env');
@@ -28,6 +29,8 @@ const automationEngine    = require('./services/ai/AutomationEngine');
 const positionTracker     = require('./services/trading/PositionTracker');
 const paperEngine         = require('./services/trading/PaperTradingEngine');
 const orderExecutor       = require('./services/trading/OrderExecutor');
+const { paperBot, liveBot } = require('./services/bot/TradingBot');
+const TradingConfig       = require('./models/TradingConfig');
 const cron                = require('node-cron');
 const User                = require('./models/User');
 
@@ -40,6 +43,7 @@ const io = new Server(server, {
 });
 
 // ─── Middleware ───────────────────────────────────────────
+app.use(compression());
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(cors({ origin: config.corsOrigin, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
@@ -63,6 +67,7 @@ app.use('/api/paper',         paperRoutes);
 app.use('/api/analytics',     analyticsRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/automation',    require('./routes/automation'));
+app.use('/api/bot',           require('./routes/bot'));
 
 const healthHandler = (_req, res) => {
     res.json({
@@ -149,31 +154,15 @@ async function start() {
     signalTracker.start(io, wsManager);
     app.set('signalTracker', signalTracker);
 
-    // 7. Init AutomationEngine — independent paper + live automation
+    // 7. Init AutomationEngine — independent paper + live automation (starts only when user clicks Start)
     automationEngine.init(io, signalEngine, paperEngine, orderExecutor, wsManager);
     app.set('automationEngine', automationEngine);
 
-    // Restore automation if it was enabled before server restart
-    try {
-        const UserPreferences = require('./models/UserPreferences');
-        const prefs = await UserPreferences.findOne({});
-        if (prefs?.paperAuto?.enabled) {
-            console.log('[AutomationEngine] Restoring paper automation after restart…');
-            automationEngine.startMode('paper');
-        }
-        if (prefs?.liveAuto?.enabled) {
-            console.log('[AutomationEngine] Restoring live automation after restart…');
-            automationEngine.startMode('live');
-        }
-        // Recover any daily reports that were missed while server was down
-        automationEngine._recoverMissedReports().catch(e =>
-            console.warn('[AutomationEngine] Report recovery error:', e.message)
-        );
-    } catch (e) {
-        console.warn('[AutomationEngine] Could not restore automation state:', e.message);
-    }
+    // 8. Init TradingBot (starts only when user clicks Start)
+    app.set('paperTradingBot', paperBot);
+    app.set('liveTradingBot', liveBot);
 
-    // 7. Daily summary cron — fires at midnight every day
+    // 9. Daily summary cron — fires at midnight every day
     cron.schedule('0 0 * * *', async () => {
         try {
             console.log('[CRON] Sending daily summaries…');
@@ -217,6 +206,8 @@ function shutdown(signal) {
     signalTracker.stop();
     automationEngine.stopMode('paper');
     automationEngine.stopMode('live');
+    paperBot.stop();
+    liveBot.stop();
     positionTracker.stop();
     paperEngine.stop();
     productCatalog.destroy();

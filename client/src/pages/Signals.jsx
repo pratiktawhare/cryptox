@@ -1,16 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { io } from 'socket.io-client';
 import api from '../services/api';
+import { useSocket } from '../context/SocketContext';
 import TradeConfirmDialog from '../components/trading/TradeConfirmDialog';
 import NotificationBell from '../components/common/NotificationBell';
 import MobileBottomNav from '../components/layout/MobileBottomNav';
-
-const SOCKET_URL = import.meta.env.VITE_API_URL
-    ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '')
-    : (typeof window !== 'undefined'
-        ? `${window.location.protocol}//${window.location.hostname}:3001`
-        : 'http://localhost:3001');
 
 // ─── Signal card color helpers ────────────────────────────────────────────────
 
@@ -263,6 +257,7 @@ function SignalCard({ signal, onTrade }) {
 
 const Signals = () => {
     const navigate = useNavigate();
+    const { socket } = useSocket();
     const [signals, setSignals] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState('all'); // all | BUY | SELL
@@ -300,17 +295,19 @@ const Signals = () => {
 
     // Real-time new signals via Socket.IO
     useEffect(() => {
-        const socket = io(SOCKET_URL, { withCredentials: true });
+        if (!socket) return;
 
-        socket.on('new_signal', (signal) => {
+        const handleNewSignal = (signal) => {
+            if (!signal) return;
             setSignals(prev => {
                 const filtered = prev.filter(s => s._id !== signal._id);
                 return [signal, ...filtered].slice(0, 50);
             });
-        });
+        };
 
-        return () => socket.disconnect();
-    }, []);
+        socket.on('new_signal', handleNewSignal);
+        return () => socket.off('new_signal', handleNewSignal);
+    }, [socket]);
 
     // On-demand scan for a specific coin
     const handleAnalyzeNow = async (symbol) => {

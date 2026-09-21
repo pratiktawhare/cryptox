@@ -23,9 +23,8 @@ const positionTracker = require('./PositionTracker');
 
 // ─── Safety limits (configurable per user in Phase 9) ─────────────────────────
 const SAFETY = {
-    MAX_LEVERAGE:      20,       // Hard cap on leverage
-    MAX_ORDER_SIZE:    100,      // Max contracts per order
-    MIN_ORDER_SIZE:    1,        // Min contracts per order
+    MAX_LEVERAGE:      100,      // Cap on maximum leverage
+    MIN_ORDER_SIZE:    1,        // Min contracts per order (exchange minimum)
     MAX_CONCURRENT:    5,        // Max open positions
     MIN_RR_RATIO:      1.5,      // Minimum risk/reward (SL+TP must be set)
     REQUIRE_SL:        true,     // Force stop-loss on every order

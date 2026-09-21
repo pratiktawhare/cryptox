@@ -115,7 +115,8 @@ router.post('/partial-close/:id', async (req, res) => {
         // Partial: reduce position size and release proportional margin
         const price       = paperEngine.getPrice(pos.symbol) || pos.entryPrice;
         const priceDiff   = pos.side === 'buy' ? (price - pos.entryPrice) : (pos.entryPrice - price);
-        const pnlPerUnit  = priceDiff;                          // per contract
+        const cv          = pos.contractValue || 1;
+        const pnlPerUnit  = priceDiff * cv;                          // per contract
         const closedPnl   = pnlPerUnit * closeSize;
         const marginPerUnit = pos.marginUsed / pos.size;
         const marginReleased = marginPerUnit * closeSize;
@@ -128,9 +129,10 @@ router.post('/partial-close/:id', async (req, res) => {
         // Credit wallet
         const wallet = await PaperWallet.findOne({ userId: req.user.id });
         if (wallet) {
-            wallet.balance   += marginReleased + closedPnl;
-            wallet.available += marginReleased + closedPnl;
-            wallet.used      -= marginReleased;
+            wallet.balance   += closedPnl;
+            wallet.used      = Math.max(0, wallet.used - marginReleased);
+            wallet.available = Math.max(0, wallet.balance - wallet.used);
+            wallet.equity    = wallet.balance;
             wallet.totalRealised += closedPnl;
             if (closedPnl > 0) wallet.totalWins++; else wallet.totalLosses++;
             wallet.totalTrades++;
@@ -199,8 +201,8 @@ router.get('/history', async (req, res) => {
 router.post('/reset', async (req, res) => {
     try {
         const startBalance = parseFloat(req.body.balance) || 10000;
-        if (startBalance < 100 || startBalance > 1_000_000) {
-            return res.status(400).json({ error: 'Starting balance must be between $100 and $1,000,000' });
+        if (startBalance <= 0 || isNaN(startBalance)) {
+            return res.status(400).json({ error: 'Starting balance must be a positive number' });
         }
 
         // Close all open positions (market close)

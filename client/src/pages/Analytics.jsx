@@ -383,10 +383,10 @@ export default function Analytics() {
                             <div className="space-y-3 md:space-y-6 animate-fade-in">
                                 {/* Top KPIs */}
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
-                                    <StatCard label="Paper Equity"    value={`$${(wallet?.equity ?? 0).toFixed(2)}`}   sub={`Started $${(wallet?.startingBalance ?? 10000).toFixed(0)}`} color={wallet?.totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'} icon="📄" />
+                                    <StatCard label="Paper Equity"    value={`$${(wallet?.equity ?? 0).toFixed(2)}`}   sub={`Started $${(wallet?.startingBalance ?? 10).toFixed(0)}`} color={wallet?.totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'} icon="📄" />
                                     <StatCard label="Paper Return"    value={`${wallet?.returnPct >= 0 ? '+' : ''}${(wallet?.returnPct ?? 0).toFixed(2)}%`} sub={`PnL: $${(wallet?.totalPnl ?? 0).toFixed(2)}`} color={(wallet?.returnPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'} icon="📈" />
                                     <StatCard label="Win Rate"        value={`${wallet?.winRate ?? 0}%`}               sub={`${wallet?.totalTrades ?? 0} paper trades`}                color="text-crypto-heading" icon="🎯" />
-                                    <StatCard label="Max Drawdown"    value={`-${(wallet?.maxDrawdown ?? 0).toFixed(1)}%`} sub={`Peak: $${(wallet?.peakEquity ?? 10000).toFixed(2)}`} color="text-amber-400" icon="📉" />
+                                    <StatCard label="Max Drawdown"    value={`-${(wallet?.maxDrawdown ?? 0).toFixed(1)}%`} sub={`Peak: $${(wallet?.peakEquity ?? wallet?.equity ?? 10).toFixed(2)}`} color="text-amber-400" icon="📉" />
                                 </div>
 
                                 {/* Signal KPIs */}
@@ -394,7 +394,7 @@ export default function Analytics() {
                                     <StatCard label="AI Signals"      value={signals?.total ?? 0}                      sub="Total generated"                                          color="text-crypto-heading" icon="🤖" />
                                     <StatCard label="Signal Win Rate" value={signals?.winRate ? `${signals.winRate}%` : '—'} sub={`${signals?.wins ?? 0} wins`}                     color="text-crypto-primary" icon="⚡" />
                                     <StatCard label="Avg R/R"         value={signals?.avgRR ? `1:${signals.avgRR}` : '—'}   sub="Achieved R/R ratio"                               color="text-crypto-heading" icon="⚖️" />
-                                    <StatCard label="Available Margin" value={`$${(wallet?.available ?? 0).toFixed(2)}`}  sub={`Used: $${(10000 - (wallet?.available ?? 10000)).toFixed(2)}`} color="text-emerald-400" icon="✅" />
+                                    <StatCard label="Available Margin" value={`$${(wallet?.available ?? 0).toFixed(2)}`}  sub={`Used: $${(wallet?.used ?? 0).toFixed(2)}`} color="text-emerald-400" icon="✅" />
                                 </div>
 
                                 {/* Equity Curve */}

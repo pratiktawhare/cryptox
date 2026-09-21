@@ -79,15 +79,16 @@ router.get('/performance', async (req, res) => {
 
         res.json({
             paper: {
-                balance:     paperWallet?.balance        ?? 10000,
-                equity:      paperWallet?.equity         ?? 10000,
-                available:   paperWallet?.available      ?? 10000,
+                balance:     paperWallet?.balance        ?? (paperWallet?.startingBalance ?? 10),
+                equity:      paperWallet?.equity         ?? (paperWallet?.startingBalance ?? 10),
+                available:   paperWallet?.available      ?? (paperWallet?.startingBalance ?? 10),
                 totalPnl:    paperWallet?.totalRealised  ?? 0,
                 winRate:     paperWallet?.winRate        ?? 0,
                 totalTrades: paperWallet?.totalTrades    ?? 0,
                 maxDrawdown: paperWallet?.maxDrawdown    ?? 0,
                 returnPct:   paperWallet?.returnPct      ?? 0,
-                peakEquity:  paperWallet?.peakEquity     ?? 10000,
+                peakEquity:  paperWallet?.peakEquity     ?? (paperWallet?.startingBalance ?? 10),
+                startingBalance: paperWallet?.startingBalance ?? 10,
                 totalWins:   paperWallet?.totalWins      ?? 0,
                 totalLosses: paperWallet?.totalLosses    ?? 0,
             },

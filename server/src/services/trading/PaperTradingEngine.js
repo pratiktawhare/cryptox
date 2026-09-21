@@ -452,36 +452,104 @@ class PaperTradingEngine {
     async _closePosition(position, closePrice, status, io = null) {
         const pnl = this._calcPnl(position, closePrice);
 
+        const cv = position.contractValue || 1;
+        const notionalEntry = position.entryPrice * position.size * cv;
+        const notionalExit  = closePrice * position.size * cv;
+
+        // Delta Exchange India fee schedule (F&O):
+        // Maker fee: 0.02% + 18% GST = 0.0236% (0.000236)
+        // Taker fee: 0.05% + 18% GST = 0.0590% (0.000590)
+        const makerFee = notionalEntry * (0.0002 * 1.18);
+        const takerFee = notionalExit * (0.0005 * 1.18);
+        let totalFees  = makerFee + takerFee;
+        let netPnl     = pnl - totalFees;
+
+        // Sync with open BotTrade if one exists
+        let openBotTrade = null;
+        try {
+            const BotTrade = require('../../models/BotTrade');
+            openBotTrade = await BotTrade.findOne({
+                userId: position.userId,
+                mode: 'paper',
+                symbol: position.symbol,
+                result: 'open',
+            });
+            if (openBotTrade) {
+                totalFees = (openBotTrade.fees || makerFee) + takerFee;
+                netPnl = pnl - totalFees - (openBotTrade.slippage || 0);
+
+                openBotTrade.exitPrice = closePrice;
+                openBotTrade.exitTime = new Date();
+                openBotTrade.durationSeconds = Math.round((openBotTrade.exitTime - (openBotTrade.entryTime || openBotTrade.createdAt)) / 1000);
+                openBotTrade.grossPnl = pnl;
+                openBotTrade.fees = totalFees;
+                openBotTrade.netPnl = netPnl;
+                openBotTrade.result = netPnl >= 0 ? 'win' : 'loss';
+                openBotTrade.exitReason = status === 'closed_tp' ? 'take_profit' : status === 'closed_sl' ? 'stop_loss' : 'manual_close';
+                await openBotTrade.save();
+
+                // Record result in PositionMonitor for cooldown & daily loss stats
+                try {
+                    const positionMonitor = require('../bot/PositionMonitor');
+                    const TradingConfig = require('../../models/TradingConfig');
+                    const config = await TradingConfig.findOne({ userId: position.userId, mode: 'paper' });
+                    await positionMonitor.recordTradeResult(position.userId, 'paper', netPnl, config);
+                } catch (pmErr) {
+                    console.warn('[PaperEngine] Could not record result on PositionMonitor:', pmErr.message);
+                }
+
+                // Emit bot_trade_closed to notify TradingBot UI immediately
+                const _io = io || this.io;
+                if (_io) {
+                    const botTradePayload = {
+                        trade: openBotTrade.toObject(),
+                        status: 'closed',
+                        mode: 'paper',
+                        symbol: position.symbol,
+                    };
+                    _io.to(`user:${position.userId}`).emit('bot_trade_closed', botTradePayload);
+                    _io.emit('bot_trade_closed', botTradePayload);
+                }
+                console.log(`[PaperEngine] 🔗 Synced & closed matching BotTrade for ${position.symbol} (Net: $${netPnl.toFixed(4)})`);
+            }
+        } catch (botSyncErr) {
+            console.error('[PaperEngine] Failed to sync BotTrade upon close:', botSyncErr.message);
+        }
+
         // Update position
         position.status      = status;
         position.closePrice  = closePrice;
-        position.realisedPnl = pnl;
+        position.realisedPnl = netPnl;
+        position.fees        = totalFees;
         position.closedAt    = new Date();
         position.unrealisedPnl = 0;
         await position.save();
 
         _monitoredPositions.delete(String(position._id));
 
-        // Release margin + apply PnL to wallet
+        // Release margin + apply Net PnL (after real Delta fees) to wallet
         const wallet = await this._getOrCreateWallet(String(position.userId));
-        wallet.available  += position.marginUsed + pnl;
-        wallet.used       = Math.max(0, wallet.used - position.marginUsed);
-        wallet.balance    += pnl;
-        wallet.totalRealised += pnl;
-        wallet.totalTrades += 1;
-        if (pnl >= 0) wallet.totalWins += 1;
+        wallet.balance       += netPnl;
+        wallet.totalRealised += netPnl;
+        wallet.totalTrades   += 1;
+        if (netPnl >= 0) wallet.totalWins += 1;
         else wallet.totalLosses += 1;
+
         const openPositions = await PaperPosition.find({ userId: position.userId, status: 'open' });
         let totalUnrealised = 0;
+        let totalMarginUsed = 0;
         for (const pos of openPositions) {
             if (String(pos._id) !== String(position._id)) {
                 totalUnrealised += pos.unrealisedPnl || 0;
+                totalMarginUsed += pos.marginUsed || 0;
             }
         }
-        wallet.equity = wallet.balance + totalUnrealised;
+        wallet.used       = totalMarginUsed;
+        wallet.available  = Math.max(0, wallet.balance - wallet.used);
+        wallet.equity     = wallet.balance + totalUnrealised;
 
         if (wallet.equity > wallet.peakEquity) wallet.peakEquity = wallet.equity;
-        const dd = ((wallet.peakEquity - wallet.equity) / wallet.peakEquity) * 100;
+        const dd = wallet.peakEquity > 0 ? ((wallet.peakEquity - wallet.equity) / wallet.peakEquity) * 100 : 0;
         if (dd > wallet.maxDrawdown) wallet.maxDrawdown = dd;
         await wallet.save();
 
@@ -499,11 +567,12 @@ class PaperTradingEngine {
 
         console.log(`[PaperEngine] ${pnl >= 0 ? '✅' : '❌'} Paper closed ${position.symbol} @ $${closePrice} | PnL: $${pnl.toFixed(2)}`);
 
-        if (io) {
+        if (io || this.io) {
+            const _io = io || this.io;
             const userId = String(position.userId);
             const data = { position: position.toObject(), pnl, wallet: wallet.toObject() };
-            io.to(`user:${userId}`).emit('paper_position_closed', data);
-            io.emit('paper_position_closed', data);
+            _io.to(`user:${userId}`).emit('paper_position_closed', data);
+            _io.emit('paper_position_closed', data);
         }
 
         return { position, pnl, wallet };
@@ -512,11 +581,14 @@ class PaperTradingEngine {
     // ─── P&L calculation ───────────────────────────────────────────────────────
 
     _calcPnl(position, currentPrice) {
-        const { side, entryPrice, size, leverage } = position;
+        const { side, entryPrice, size } = position;
         const priceDiff = side === 'buy'
             ? currentPrice - entryPrice
             : entryPrice - currentPrice;
-        return priceDiff * size;
+        const productCatalog = require('../ProductCatalog');
+        const spec = productCatalog.getBySymbol(position.symbol);
+        const cv = spec?.contract_value ? parseFloat(spec.contract_value) : (position.contractValue || 1);
+        return priceDiff * size * cv;
     }
 
     _calcUnrealised(position, currentPrice) {
@@ -629,16 +701,29 @@ class PaperTradingEngine {
         const wallet = await this._getOrCreateWallet(userId);
         const openPositions = await PaperPosition.find({ userId, status: 'open' });
         let totalUnrealised = 0;
+        let totalMarginUsed = 0;
         for (const pos of openPositions) {
             totalUnrealised += pos.unrealisedPnl || 0;
+            totalMarginUsed += pos.marginUsed || 0;
         }
+        wallet.used = totalMarginUsed;
         wallet.equity = wallet.balance + totalUnrealised;
+        wallet.available = Math.max(0, wallet.balance - wallet.used);
         await wallet.save();
         return wallet;
     }
 
     async getOpenPositions(userId) {
-        return PaperPosition.find({ userId, status: 'open' }).lean();
+        const positions = await PaperPosition.find({ userId, status: 'open' }).lean();
+        const productCatalog = require('../ProductCatalog');
+        return positions.map(pos => {
+            const spec = productCatalog.getBySymbol(pos.symbol);
+            const contractValue = spec?.contract_value ? parseFloat(spec.contract_value) : (pos.contractValue || 1);
+            return {
+                ...pos,
+                contractValue,
+            };
+        });
     }
 
     async getHistory(userId, limit = 50) {

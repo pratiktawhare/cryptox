@@ -55,6 +55,15 @@ router.post('/start', async (req, res) => {
     }
 
     try {
+        if (mode === 'live') {
+            const liveTradingBot = req.app.get('liveTradingBot');
+            if (liveTradingBot?.isRunning) {
+                return res.status(409).json({
+                    error: 'TradingBot is currently running in live mode. Please stop it before starting AI Automation live mode.',
+                });
+            }
+        }
+
         // Enable in DB first
         await UserPreferences.updateMany(
             {},

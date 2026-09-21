@@ -11,6 +11,7 @@ import Markets from './pages/Markets';
 import Signals from './pages/Signals';
 import Positions from './pages/Positions';
 import Analytics from './pages/Analytics';
+import TradingBot from './pages/TradingBot';
 
 function ProtectedRoute({ children }) {
     const { user, loading, isInitialized } = useAuth();
@@ -88,6 +89,14 @@ function AppRoutes() {
                 element={
                     <ProtectedRoute>
                         <Analytics />
+                    </ProtectedRoute>
+                }
+            />
+            <Route
+                path="/bot"
+                element={
+                    <ProtectedRoute>
+                        <TradingBot />
                     </ProtectedRoute>
                 }
             />

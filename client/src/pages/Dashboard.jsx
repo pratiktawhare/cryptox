@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { io } from 'socket.io-client';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useSocket } from '../context/SocketContext';
 import { useTheme } from '../context/ThemeContext';
 import { useTradingMode } from '../context/TradingModeContext';
 import ThemeToggle from '../components/layout/ThemeToggle';
@@ -49,22 +49,15 @@ const NAV_ITEMS = [
     },
 ];
 
-const SOCKET_URL = import.meta.env.VITE_API_URL
-    ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '')
-    : (typeof window !== 'undefined'
-        ? `${window.location.protocol}//${window.location.hostname}:3001`
-        : 'http://localhost:3001');
-
 const Dashboard = () => {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const { user, logout } = useAuth();
     const { theme } = useTheme();
     const { isPaper } = useTradingMode();
+    const { socket, connected: wsConnected } = useSocket();
     const [activeTab, setActiveTab] = useState('portfolio');
     const [livePrices, setLivePrices] = useState({});
-    const [socketInstance, setSocketInstance] = useState(null);
-    const [wsConnected, setWsConnected] = useState(false);
     const [autoStatus, setAutoStatus] = useState({ paper: false, live: false, paperNextAt: null, liveNextAt: null });
 
     // Read ?coin= from URL (navigated from Markets page)
@@ -80,48 +73,55 @@ const Dashboard = () => {
         }
     }, [urlCoin]);
 
-    // ── Socket connection ──
+    // ── Socket listeners ──
     useEffect(() => {
-        const socket = io(SOCKET_URL, { withCredentials: true, reconnectionAttempts: 10 });
+        if (!socket) return;
 
-        socket.on('connect', () => {
-            setSocketInstance(socket);
-            setWsConnected(true);
-        });
+        const handleTicker = (data) => {
+            if (data?.symbol) {
+                setLivePrices((prev) => ({ ...prev, [data.symbol]: data }));
+            }
+        };
 
-        socket.on('disconnect', () => setWsConnected(false));
+        const handleBatch = (batch) => {
+            if (batch) {
+                setLivePrices((prev) => ({ ...prev, ...batch }));
+            }
+        };
 
-        socket.on('ticker', (data) => {
-            setLivePrices((prev) => ({ ...prev, [data.symbol]: data }));
-        });
+        const handleCycle = (data) => {
+            if (data?.mode) {
+                setAutoStatus(prev => ({
+                    ...prev,
+                    [data.mode]: true,
+                    [`${data.mode}NextAt`]: data.nextCycleAt || prev[`${data.mode}NextAt`],
+                }));
+            }
+        };
 
-        // Also receive batch updates
-        socket.on('market_ticker_batch', (batch) => {
-            setLivePrices((prev) => ({ ...prev, ...batch }));
-        });
+        const handleStatus = (data) => {
+            if (data) {
+                setAutoStatus({
+                    paper: !!data.paper?.running,
+                    live:  !!data.live?.running,
+                    paperNextAt: data.paper?.nextCycleAt || null,
+                    liveNextAt:  data.live?.nextCycleAt  || null,
+                });
+            }
+        };
 
-        // Listen for automation events
-        socket.on('automation_cycle', (data) => {
-            // Use nextCycleAt from server; do NOT hardcode 30 minutes
-            setAutoStatus(prev => ({
-                ...prev,
-                [data.mode]: true,
-                // data.nextCycleAt is the real timestamp sent by AutomationEngine
-                [`${data.mode}NextAt`]: data.nextCycleAt || prev[`${data.mode}NextAt`],
-            }));
-        });
+        socket.on('ticker', handleTicker);
+        socket.on('market_ticker_batch', handleBatch);
+        socket.on('automation_cycle', handleCycle);
+        socket.on('automation_status', handleStatus);
 
-        socket.on('automation_status', (data) => {
-            setAutoStatus({
-                paper: !!data.paper?.running,
-                live:  !!data.live?.running,
-                paperNextAt: data.paper?.nextCycleAt || null,
-                liveNextAt:  data.live?.nextCycleAt  || null,
-            });
-        });
-
-        return () => socket.disconnect();
-    }, []);
+        return () => {
+            socket.off('ticker', handleTicker);
+            socket.off('market_ticker_batch', handleBatch);
+            socket.off('automation_cycle', handleCycle);
+            socket.off('automation_status', handleStatus);
+        };
+    }, [socket]);
 
     // Fetch automation status on mount
     useEffect(() => {
@@ -224,6 +224,21 @@ const Dashboard = () => {
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
                                 </svg>
                                 AI Signals
+                            </button>
+
+                            {/* Auto Bot link */}
+                            <button
+                                onClick={() => navigate('/bot')}
+                                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold text-crypto-primary bg-crypto-primary/10 hover:bg-crypto-primary/20 transition-all duration-200 cursor-pointer border border-crypto-primary/20"
+                            >
+                                <svg className="w-4 h-4 text-crypto-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <rect x="3" y="11" width="18" height="10" rx="2" />
+                                    <circle cx="12" cy="5" r="2" />
+                                    <path d="M12 7v4" />
+                                    <line x1="8" y1="16" x2="8" y2="16" />
+                                    <line x1="16" y1="16" x2="16" y2="16" />
+                                </svg>
+                                Auto Bot
                             </button>
 
                             {/* Positions link */}
@@ -427,10 +442,10 @@ const Dashboard = () => {
                         </div>
 
                         {/* Chart */}
-                        {socketInstance ? (
+                        {socket ? (
                             <TradingChart
                                 symbol={selectedSymbol}
-                                socket={socketInstance}
+                                socket={socket}
                                 isDarkMode={theme === 'dark'}
                                 onNewOrder={(sym) => {
                                     setSelectedSymbol(sym);

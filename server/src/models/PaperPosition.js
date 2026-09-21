@@ -12,6 +12,7 @@ const paperPositionSchema = new mongoose.Schema({
     symbol:     { type: String, required: true, uppercase: true, index: true },
     side:       { type: String, required: true, enum: ['buy', 'sell'] },
     size:       { type: Number, required: true, min: 1 },       // contracts
+    contractValue: { type: Number, default: 1 },                // multiplier from ProductCatalog (e.g. 0.01 for ARMBUSD)
     entryPrice: { type: Number, required: true },
     leverage:   { type: Number, default: 1, min: 1 },
 

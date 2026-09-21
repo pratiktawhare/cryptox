@@ -97,6 +97,25 @@ class ProductCatalog {
             const byId = new Map();
 
             for (const p of perpetuals) {
+                // Determine true maximum leverage supported by Delta Exchange:
+                // Delta API does not return a direct 'max_leverage' key. Instead it supplies:
+                // 1. ui_config.leverage_slider_values (array of allowed leverages, e.g. [1, ..., 200])
+                // 2. default_leverage (string, e.g. "200.000000000000000000")
+                // 3. initial_margin (string percentage, e.g. "0.5" -> 100 / 0.5 = 200x)
+                const sliderMax = p.ui_config?.leverage_slider_values?.length
+                    ? Math.max(...p.ui_config.leverage_slider_values)
+                    : 0;
+                const defaultLev = parseFloat(p.default_leverage) || 0;
+                const marginLev = parseFloat(p.initial_margin) > 0
+                    ? Math.round(100 / parseFloat(p.initial_margin))
+                    : 0;
+                const calculatedMaxLeverage = Math.max(
+                    sliderMax,
+                    defaultLev,
+                    marginLev,
+                    parseFloat(p.max_leverage) || 0
+                ) || 20;
+
                 const product = {
                     id: p.id,
                     symbol: p.symbol,
@@ -109,7 +128,7 @@ class ProductCatalog {
                     taker_commission_rate: parseFloat(p.taker_commission_rate) || 0.0005,
                     initial_margin: parseFloat(p.initial_margin_scaling_factor) || 0.1,
                     maintenance_margin: parseFloat(p.maintenance_margin_scaling_factor) || 0.05,
-                    max_leverage: parseFloat(p.max_leverage) || 10,
+                    max_leverage: calculatedMaxLeverage,
                     // Derived nice name: "BTC/USD Perpetual"
                     displayName: `${p.underlying_asset?.symbol || p.symbol.replace('USD', '')}/${p.quoting_asset?.symbol || 'USD'}`,
                 };

@@ -4,19 +4,13 @@
  */
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { io } from "socket.io-client";
 import api from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { useTradingMode } from "../context/TradingModeContext";
+import { useSocket } from "../context/SocketContext";
 import TradeConfirmDialog from "../components/trading/TradeConfirmDialog";
 import NotificationBell from "../components/common/NotificationBell";
 import MobileBottomNav from "../components/layout/MobileBottomNav";
-
-const SOCKET_URL = import.meta.env.VITE_API_URL
-  ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '')
-  : (typeof window !== "undefined"
-    ? window.location.protocol + "//" + window.location.hostname + ":3001"
-    : "http://localhost:3001");
 
 function fmt(n, dec = 2) {
   if (n === null || n === undefined || isNaN(n)) return "-";
@@ -61,14 +55,14 @@ function WalletBanner({ wallet, isPaper }) {
   const totalPnl = wallet.unrealisedPnl ?? 0;
   const marginRatio = wallet.used && wallet.equity ? (wallet.used / wallet.equity) * 100 : 0;
   const stats = [
-    { label: "Total Equity", value: "$" + fmt(wallet.equity), color: "text-crypto-heading" },
-    { label: "Available", value: "$" + fmt(wallet.available), color: "text-emerald-400" },
-    { label: "Used Margin", value: "$" + fmt(wallet.used), color: marginRatio > 70 ? "text-red-400" : "text-crypto-primary", mr: marginRatio },
-    { label: "Unrealised PnL", value: (totalPnl >= 0 ? "+" : "") + "$" + fmt(totalPnl), color: pnlColor(totalPnl) },
+    { label: "Total Equity", value: "$" + fmt(wallet.equity), inr: "≈ ₹" + fmt(wallet.equity * 85), color: "text-crypto-heading" },
+    { label: "Available", value: "$" + fmt(wallet.available), inr: "≈ ₹" + fmt(wallet.available * 85), color: "text-emerald-400" },
+    { label: "Used Margin", value: "$" + fmt(wallet.used), inr: "≈ ₹" + fmt(wallet.used * 85), color: marginRatio > 70 ? "text-red-400" : "text-crypto-primary", mr: marginRatio },
+    { label: "Unrealised PnL", value: (totalPnl >= 0 ? "+" : "") + "$" + fmt(totalPnl), inr: "≈ " + (totalPnl >= 0 ? "+" : "-") + "₹" + fmt(Math.abs(totalPnl) * 85), color: pnlColor(totalPnl) },
   ];
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3">
-      {stats.map(({ label, value, color, mr }) => (
+      {stats.map(({ label, value, inr, color, mr }) => (
         <div key={label} className="bg-crypto-card border border-crypto-border rounded-2xl p-3 md:p-4">
           <div className="text-[10px] text-crypto-muted uppercase tracking-wider mb-1 flex items-center justify-between">
             {label}
@@ -77,6 +71,7 @@ function WalletBanner({ wallet, isPaper }) {
             )}
           </div>
           <div className={"text-lg md:text-xl font-bold tabular-nums " + color}>{value}</div>
+          {inr && <div className="text-[11px] font-semibold text-crypto-muted tabular-nums mt-0.5">{inr}</div>}
           {mr > 0 && (
             <div className="mt-2">
               <div className="h-1 bg-crypto-border rounded-full overflow-hidden">
@@ -230,7 +225,12 @@ function PartialCloseDialog({ pos, onClose, onPartialClose, markPrice }) {
         {markPrice && (
           <div className={"rounded-xl p-3 mb-5 flex items-center justify-between " + (estimatedPnl >= 0 ? "bg-emerald-400/5 border border-emerald-400/20" : "bg-red-400/5 border border-red-400/20")}>
             <span className="text-xs text-crypto-muted">Estimated PnL</span>
-            <span className={"text-sm font-bold tabular-nums " + pnlColor(estimatedPnl)}>{estimatedPnl >= 0 ? "+" : ""}{fmtP(estimatedPnl)}</span>
+            <div className="text-right">
+              <div className={"text-sm font-bold tabular-nums " + pnlColor(estimatedPnl)}>{estimatedPnl >= 0 ? "+" : ""}{fmtP(estimatedPnl)}</div>
+              <div className={"text-[10px] font-semibold tabular-nums " + pnlColor(estimatedPnl)}>
+                ≈ {estimatedPnl >= 0 ? "+" : "-"}₹{fmt(Math.abs(estimatedPnl) * 85, 2)}
+              </div>
+            </div>
           </div>
         )}
         <div className="flex gap-2">
@@ -355,14 +355,14 @@ function AddToPositionDialog({ pos, onClose, onAdd, markPrice }) {
 // --- Reset Balance Dialog ---
 
 function ResetBalanceDialog({ onClose, onReset }) {
-  const [balance, setBalance] = useState("10000");
+  const [balance, setBalance] = useState("10");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const handleReset = async () => {
     const val = parseFloat(balance);
-    if (isNaN(val) || val < 100 || val > 1000000) {
-      setError("Please enter an amount between $100 and $1,000,000");
+    if (isNaN(val) || val <= 0) {
+      setError("Please enter a valid positive amount (e.g. $10, $50, $1,000)");
       return;
     }
     setSaving(true);
@@ -377,7 +377,7 @@ function ResetBalanceDialog({ onClose, onReset }) {
     }
   };
 
-  const presets = [1000, 10000, 50000, 100000];
+  const presets = [10, 50, 100, 1000, 10000];
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
@@ -385,7 +385,7 @@ function ResetBalanceDialog({ onClose, onReset }) {
         <div className="flex items-center justify-between mb-5">
           <div>
             <h2 className="text-base font-bold text-crypto-heading">Reset Paper Balance</h2>
-            <p className="text-xs text-crypto-muted mt-0.5">This will close all open paper positions.</p>
+            <p className="text-xs text-crypto-muted mt-0.5">Free balance input with low-budget support ($5, $10, etc.)</p>
           </div>
           <button onClick={onClose} className="text-crypto-muted hover:text-crypto-heading cursor-pointer p-1">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
@@ -399,19 +399,20 @@ function ResetBalanceDialog({ onClose, onReset }) {
         )}
 
         <div className="mb-4">
-          <label className="text-xs text-crypto-muted mb-2 block">Select starting balance</label>
-          <div className="grid grid-cols-4 gap-2 mb-3">
+          <label className="text-xs text-crypto-muted mb-2 block">Select starting balance preset</label>
+          <div className="grid grid-cols-5 gap-1.5 mb-3">
             {presets.map((p) => (
               <button key={p} onClick={() => setBalance(String(p))}
                 className={"py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer " + (parseFloat(balance) === p ? "bg-crypto-primary text-white" : "bg-crypto-bg-subtle text-crypto-muted hover:text-crypto-heading border border-crypto-border")}>
-                ${p.toLocaleString()}
+                ${p >= 1000 ? `${p / 1000}k` : p}
               </button>
             ))}
           </div>
           <div className="relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-crypto-muted text-sm">$</span>
-            <input type="number" min="100" max="1000000" value={balance}
+            <input type="number" step="any" min="0.01" value={balance}
               onChange={(e) => setBalance(e.target.value)}
+              placeholder="10.00"
               className="w-full bg-crypto-bg border border-crypto-border rounded-xl pl-7 pr-3 py-2.5 text-sm text-crypto-heading focus:outline-none focus:border-crypto-primary/60" />
           </div>
         </div>
@@ -442,10 +443,13 @@ function PositionCard({ pos, livePrices, onClose, onModify, onPartialClose, onAd
   const entry = pos.entryPrice;
   const size = pos.size;
   const leverage = pos.leverage;
+  const contractVal = pos.contractValue != null ? pos.contractValue : 1;
 
   const priceDiff = isLong ? markPrice - entry : entry - markPrice;
-  const unrealisedPnl = pos.unrealisedPnl != null ? pos.unrealisedPnl : priceDiff * size;
-  const margin = pos.marginUsed || pos.margin || (entry * size) / leverage;
+  const unrealisedPnl = pos.unrealisedPnl != null ? pos.unrealisedPnl : priceDiff * size * contractVal;
+  const inrPnl = pos.unrealisedPnlInr != null ? Number(pos.unrealisedPnlInr) : (unrealisedPnl * 85);
+  const inrPerContract = priceDiff * contractVal * 85;
+  const margin = pos.marginUsed || pos.margin || (entry * size * contractVal) / leverage;
   const roe = margin > 0 ? (unrealisedPnl / margin) * 100 : 0;
   const entryPct = entry > 0 ? ((markPrice - entry) / entry) * 100 * (isLong ? 1 : -1) : 0;
   const liqPrice = pos.liquidationPrice != null ? pos.liquidationPrice : (isLong ? entry * (1 - 0.9 / leverage) : entry * (1 + 0.9 / leverage));
@@ -490,6 +494,9 @@ function PositionCard({ pos, livePrices, onClose, onModify, onPartialClose, onAd
             <div className="text-right flex-shrink-0">
               <div className={"text-base md:text-lg font-black tabular-nums leading-tight " + pnlColor(unrealisedPnl)}>
                 {unrealisedPnl >= 0 ? "+" : ""}{fmtP(unrealisedPnl)}
+              </div>
+              <div className={"text-[11px] font-bold tabular-nums " + pnlColor(unrealisedPnl)}>
+                ≈ {inrPnl >= 0 ? "+" : "-"}₹{fmt(Math.abs(inrPnl), 2)}
               </div>
               <div className={"text-[10px] md:text-xs font-semibold tabular-nums " + pnlColor(roe)}>ROE {roe >= 0 ? "+" : ""}{fmt(roe, 2)}%</div>
             </div>
@@ -551,7 +558,7 @@ function PositionCard({ pos, livePrices, onClose, onModify, onPartialClose, onAd
             <div className="mb-4 pt-3 border-t border-crypto-border/40 grid grid-cols-2 gap-x-4 gap-y-2.5">
               <div>
                 <div className="text-[9px] text-crypto-muted uppercase mb-0.5">Position Value</div>
-                <div className="text-xs text-crypto-heading tabular-nums">{fmtP(markPrice * size)}</div>
+                <div className="text-xs text-crypto-heading tabular-nums">{fmtP(markPrice * size * contractVal)}</div>
               </div>
               <div>
                 <div className="text-[9px] text-crypto-muted uppercase mb-0.5">Margin Used</div>
@@ -559,7 +566,12 @@ function PositionCard({ pos, livePrices, onClose, onModify, onPartialClose, onAd
               </div>
               <div>
                 <div className="text-[9px] text-crypto-muted uppercase mb-0.5">PnL per Contract</div>
-                <div className={"text-xs font-semibold tabular-nums " + pnlColor(priceDiff)}>{priceDiff >= 0 ? "+" : ""}{fmtP(priceDiff)}</div>
+                <div className={"text-xs font-semibold tabular-nums " + pnlColor(priceDiff)}>
+                  {priceDiff >= 0 ? "+" : ""}{fmtP(priceDiff * contractVal)}
+                  <span className="text-[10px] text-crypto-muted font-normal ml-1">
+                    (≈ {inrPerContract >= 0 ? "+" : "-"}₹{fmt(Math.abs(inrPerContract), 2)})
+                  </span>
+                </div>
               </div>
               <div>
                 <div className="text-[9px] text-crypto-muted uppercase mb-0.5">Opened</div>
@@ -654,7 +666,18 @@ function HistoryRow({ trade }) {
       <td className="px-4 py-3 text-sm text-crypto-heading tabular-nums">{fmtP(trade.filledPrice || trade.price || trade.entryPrice) || "Market"}</td>
       <td className="px-4 py-3 text-xs text-crypto-muted">{trade.leverage}×</td>
       <td className="px-4 py-3"><span className={"text-[10px] font-semibold px-2 py-0.5 rounded-full border " + statusColor}>{statusText}</span></td>
-      <td className="px-4 py-3">{pnl != null ? <span className={"text-sm font-bold tabular-nums " + pnlColor(pnl)}>{pnl >= 0 ? "+" : ""}{fmtP(pnl)}</span> : <span className="text-xs text-crypto-muted">—</span>}</td>
+      <td className="px-4 py-3">
+        {pnl != null ? (
+          <div>
+            <div className={"text-sm font-bold tabular-nums " + pnlColor(pnl)}>{pnl >= 0 ? "+" : ""}{fmtP(pnl)}</div>
+            <div className={"text-[10px] font-semibold tabular-nums " + pnlColor(pnl)}>
+              ≈ {pnl >= 0 ? "+" : "-"}₹{fmt(Math.abs(pnl) * 85, 2)}
+            </div>
+          </div>
+        ) : (
+          <span className="text-xs text-crypto-muted">—</span>
+        )}
+      </td>
       <td className="px-4 py-3 text-xs text-crypto-muted max-w-xs truncate">{trade.closePrice ? "Closed @ " + fmtP(trade.closePrice) : (trade.errorMessage || trade.source || "—")}</td>
     </tr>
   );
@@ -753,6 +776,7 @@ const Positions = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { isPaper } = useTradingMode();
+  const { socket } = useSocket();
 
   const [positions, setPositions] = useState([]);
   const [wallet, setWallet] = useState(null);
@@ -795,7 +819,14 @@ const Positions = () => {
         }
         if (walletRes.status === "fulfilled") {
           const w = walletRes.value.data.wallet;
-          if (w) setWallet({ equity: w.equity != null ? w.equity : w.balance, available: w.available != null ? w.available : w.balance, used: w.used != null ? w.used : 0, unrealisedPnl: w.unrealisedPnl != null ? w.unrealisedPnl : 0 });
+          if (w) setWallet({
+            ...w,
+            balance: w.balance != null ? w.balance : w.equity,
+            equity: w.equity != null ? w.equity : w.balance,
+            available: w.available != null ? w.available : w.balance,
+            used: w.used != null ? w.used : 0,
+            unrealisedPnl: w.unrealisedPnl != null ? w.unrealisedPnl : 0
+          });
         }
         if (ordersRes.status === "fulfilled") {
           setOpenOrders(ordersRes.value.data.openOrders || []);
@@ -857,64 +888,92 @@ const Positions = () => {
   }, [positions]);
 
   useEffect(() => {
-    const socket = io(SOCKET_URL, { withCredentials: true });
-    socket.on("connect", () => { if (user && (user._id || user.id)) socket.emit("join_user_room", user._id || user.id); });
+    if (!socket) return;
 
     // Listen to live WebSocket prices
-    socket.on("ticker", ({ symbol, price }) => {
-      setLivePrices((prev) => ({ ...prev, [symbol]: price }));
-    });
+    const handleTicker = ({ symbol, price }) => {
+      if (symbol && price != null) {
+        setLivePrices((prev) => ({ ...prev, [symbol]: price }));
+      }
+    };
 
     // Listen to paper trading engine real-time ticks (updates ROE and markPrice every 5s)
-    socket.on("paper_pnl_update", ({ positionId, symbol, markPrice, unrealisedPnl, roe }) => {
+    const handlePaperPnl = ({ positionId, symbol, markPrice, unrealisedPnl, roe }) => {
       if (isPaperRef.current) {
         setPositions((prev) => prev.map((p) => p._id === positionId ? { ...p, markPrice, unrealisedPnl, roe } : p));
       }
-      setLivePrices((prev) => ({ ...prev, [symbol]: markPrice }));
-    });
+      if (symbol && markPrice != null) {
+        setLivePrices((prev) => ({ ...prev, [symbol]: markPrice }));
+      }
+    };
 
-    socket.on("paper_position_updated", (updated) => {
+    const handlePaperUpdated = (updated) => {
+      if (!updated) return;
       if (isPaperRef.current) {
         setPositions((prev) => prev.map((p) => p._id === updated._id ? { ...p, ...updated } : p));
       }
-      if (updated.markPrice) setLivePrices((prev) => ({ ...prev, [updated.symbol]: updated.markPrice }));
-    });
+      if (updated.markPrice && updated.symbol) {
+        setLivePrices((prev) => ({ ...prev, [updated.symbol]: updated.markPrice }));
+      }
+    };
 
-    socket.on("paper_position_closed", () => {
+    const handlePaperClosed = () => {
       if (isPaperRef.current) {
         load();
         loadHistory(1);
       }
-    });
+    };
 
     // Live trading updates
-    socket.on("positions_update", ({ positions: p }) => {
+    const handlePositionsUpdate = ({ positions: p }) => {
       if (!isPaperRef.current) {
         setPositions(p || []);
       }
-    });
-    socket.on("wallet_update", ({ wallet: w }) => {
+    };
+
+    const handleWalletUpdate = ({ wallet: w }) => {
       if (!isPaperRef.current) {
         setWallet(w);
       }
-    });
+    };
 
     // Order placement triggers refresh
-    socket.on("order_placed", () => {
+    const handleOrderPlaced = () => {
       if (!isPaperRef.current) {
         load();
         loadHistory(1);
       }
-    });
-    socket.on("paper_order_placed", () => {
+    };
+
+    const handlePaperOrderPlaced = () => {
       if (isPaperRef.current) {
         load();
         loadHistory(1);
       }
-    });
+    };
 
-    return () => socket.disconnect();
-  }, [user, load, loadHistory]);
+    socket.on("ticker", handleTicker);
+    socket.on("paper_pnl_update", handlePaperPnl);
+    socket.on("paper_position_updated", handlePaperUpdated);
+    socket.on("paper_position_closed", handlePaperClosed);
+    socket.on("bot_trade_closed", handlePaperClosed);
+    socket.on("positions_update", handlePositionsUpdate);
+    socket.on("wallet_update", handleWalletUpdate);
+    socket.on("order_placed", handleOrderPlaced);
+    socket.on("paper_order_placed", handlePaperOrderPlaced);
+
+    return () => {
+      socket.off("ticker", handleTicker);
+      socket.off("paper_pnl_update", handlePaperPnl);
+      socket.off("paper_position_updated", handlePaperUpdated);
+      socket.off("paper_position_closed", handlePaperClosed);
+      socket.off("bot_trade_closed", handlePaperClosed);
+      socket.off("positions_update", handlePositionsUpdate);
+      socket.off("wallet_update", handleWalletUpdate);
+      socket.off("order_placed", handleOrderPlaced);
+      socket.off("paper_order_placed", handlePaperOrderPlaced);
+    };
+  }, [socket, load, loadHistory]);
 
   const handleClosePosition = useCallback(async (pos) => {
     if (isPaper) await api.post("/paper/close/" + pos._id);
@@ -1014,7 +1073,7 @@ const Positions = () => {
             )}
             {positions.length > 0 && (
               <div className={"text-xs font-semibold px-3 py-1 rounded-full border hidden sm:block " + (totalUnrealised >= 0 ? "text-emerald-400 bg-emerald-400/10 border-emerald-400/20" : "text-red-400 bg-red-400/10 border-red-400/20")}>
-                {totalUnrealised >= 0 ? "+" : ""}{fmtP(totalUnrealised)} uPnL
+                {totalUnrealised >= 0 ? "+" : ""}{fmtP(totalUnrealised)} (≈ {totalUnrealised >= 0 ? "+" : "-"}₹{fmt(Math.abs(totalUnrealised) * 85, 2)}) uPnL
               </div>
             )}
             <button onClick={() => setTradeOpen(true)} className="px-3 sm:px-4 py-2 bg-crypto-primary text-white rounded-xl text-sm font-bold hover:bg-crypto-primary/90 transition-all cursor-pointer flex items-center gap-1.5">
@@ -1043,7 +1102,7 @@ const Positions = () => {
           wallet={wallet && isPaper ? {
             ...wallet,
             unrealisedPnl: totalUnrealised,
-            equity: (wallet.available || 0) + (wallet.used || 0) + totalUnrealised,
+            equity: (((wallet.available || 0) + (wallet.used || 0)) || (wallet.balance || 0)) + totalUnrealised,
           } : wallet} 
           isPaper={isPaper} 
         />

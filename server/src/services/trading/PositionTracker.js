@@ -116,13 +116,22 @@ class PositionTracker {
                     const slOrder = symbolOrders.find(o => o.stop_order_type === 'stop_loss_order');
                     const tpOrder = symbolOrders.find(o => o.stop_order_type === 'take_profit_order');
 
+                    const productCatalog = require('../ProductCatalog');
+                    const spec = productCatalog.getBySymbol(p.product_symbol);
+                    const contractValue = spec?.contract_value ? parseFloat(spec.contract_value) : 1;
+                    const unrealisedPnl = parseFloat(p.unrealized_pnl || 0);
+                    const directInrPnl = p.unrealized_pnl_inr != null ? parseFloat(p.unrealized_pnl_inr) : null;
+                    const unrealisedPnlInr = directInrPnl != null ? directInrPnl : unrealisedPnl * 85;
+
                     return {
                         symbol:          p.product_symbol,
                         side:            p.entry_price > 0 ? (p.size > 0 ? 'buy' : 'sell') : 'unknown',
                         size:            Math.abs(parseFloat(p.size || 0)),
+                        contractValue,
                         entryPrice:      parseFloat(p.entry_price || 0),
                         markPrice:       parseFloat(p.mark_price || 0),
-                        unrealisedPnl:   parseFloat(p.unrealized_pnl || 0),
+                        unrealisedPnl,
+                        unrealisedPnlInr,
                         realisedPnl:     parseFloat(p.realized_pnl || 0),
                         margin:          parseFloat(p.initial_margin || 0),
                         leverage:        parseFloat(p.leverage || 1),

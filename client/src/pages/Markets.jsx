@@ -1,15 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { io } from 'socket.io-client';
 import api from '../services/api';
+import { useSocket } from '../context/SocketContext';
 import NotificationBell from '../components/common/NotificationBell';
 import MobileBottomNav from '../components/layout/MobileBottomNav';
-
-const SOCKET_URL = import.meta.env.VITE_API_URL
-    ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '')
-    : (typeof window !== 'undefined'
-        ? `${window.location.protocol}//${window.location.hostname}:3001`
-        : 'http://localhost:3001');
 
 // ─── Utility helpers ──────────────────────────────────────────────────────────
 
@@ -88,6 +82,7 @@ const TABS = [
 
 const Markets = () => {
     const navigate = useNavigate();
+    const { socket } = useSocket();
 
     const [products, setProducts] = useState([]);
     const [tickers, setTickers] = useState({});     // symbol → ticker
@@ -119,13 +114,14 @@ const Markets = () => {
 
     // ── Socket.IO — real-time ticker batch ─────────────────────────────────
     useEffect(() => {
-        const socket = io(SOCKET_URL, { withCredentials: true });
+        if (!socket) return;
 
-        socket.on('product_catalog', (data) => {
-            if (data.products?.length > 0) setProducts(data.products);
-        });
+        const handleCatalog = (data) => {
+            if (data?.products?.length > 0) setProducts(data.products);
+        };
 
-        socket.on('market_ticker_batch', (batch) => {
+        const handleBatch = (batch) => {
+            if (!batch) return;
             setTickers(prev => {
                 const next = { ...prev, ...batch };
                 // Detect price changes for flash
@@ -149,19 +145,26 @@ const Markets = () => {
                 }
                 return next;
             });
-        });
+        };
 
-        // Collect closes for sparklines from individual candle updates
-        socket.on('candle_update', ({ symbol, resolution, close }) => {
+        const handleCandle = ({ symbol, resolution, close }) => {
             if (resolution !== '1m') return;
             setSparklines(prev => {
                 const arr = [...(prev[symbol] || []), close].slice(-20);
                 return { ...prev, [symbol]: arr };
             });
-        });
+        };
 
-        return () => socket.disconnect();
-    }, []);
+        socket.on('product_catalog', handleCatalog);
+        socket.on('market_ticker_batch', handleBatch);
+        socket.on('candle_update', handleCandle);
+
+        return () => {
+            socket.off('product_catalog', handleCatalog);
+            socket.off('market_ticker_batch', handleBatch);
+            socket.off('candle_update', handleCandle);
+        };
+    }, [socket]);
 
     // ── Watchlist persistence ───────────────────────────────────────────────
     const toggleWatchlist = useCallback((symbol) => {

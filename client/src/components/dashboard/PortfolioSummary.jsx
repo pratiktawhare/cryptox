@@ -2,9 +2,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import { useTradingMode } from '../../context/TradingModeContext';
+import { useSocket } from '../../context/SocketContext';
 
 const PortfolioSummary = () => {
     const { isPaper } = useTradingMode();
+    const { socket } = useSocket();
     const navigate = useNavigate();
 
     // Live mode state
@@ -53,6 +55,36 @@ const PortfolioSummary = () => {
         return () => clearInterval(iv);
     }, [fetchData]);
 
+    // Keep paper positions & PnL synchronized live via Socket.IO
+    useEffect(() => {
+        if (!socket || !isPaper) return;
+
+        const handlePnlUpdate = ({ positionId, markPrice, unrealisedPnl, roe }) => {
+            setPaperPositions(prev => prev.map(p => p._id === positionId ? { ...p, markPrice, unrealisedPnl, roe } : p));
+        };
+
+        const handlePositionUpdated = (updated) => {
+            if (!updated) return;
+            setPaperPositions(prev => prev.map(p => p._id === updated._id ? { ...p, ...updated } : p));
+        };
+
+        const handleRefresh = () => {
+            fetchData();
+        };
+
+        socket.on('paper_pnl_update', handlePnlUpdate);
+        socket.on('paper_position_updated', handlePositionUpdated);
+        socket.on('paper_position_closed', handleRefresh);
+        socket.on('paper_order_placed', handleRefresh);
+
+        return () => {
+            socket.off('paper_pnl_update', handlePnlUpdate);
+            socket.off('paper_position_updated', handlePositionUpdated);
+            socket.off('paper_position_closed', handleRefresh);
+            socket.off('paper_order_placed', handleRefresh);
+        };
+    }, [socket, isPaper, fetchData]);
+
     // ── Loading skeleton ──────────────────────────────────────────────────────
     if (loading) {
         return (
@@ -72,22 +104,26 @@ const PortfolioSummary = () => {
         const w = paperWallet || { balance: 0, available: 0, used: 0, equity: 0, totalRealised: 0, totalTrades: 0, returnPct: 0, winRate: 0, maxDrawdown: 0 };
 
         const totalUnrealised = paperPositions.reduce((sum, pos) => sum + parseFloat(pos.unrealisedPnl || 0), 0);
-        const liveEquity = w.balance + totalUnrealised;
-        const overallPnl = liveEquity - (w.startingBalance || 10000);
-        const liveReturnPct = w.startingBalance > 0 ? (overallPnl / w.startingBalance) * 100 : 0;
+        const baseBalance = ((w.available || 0) + (w.used || 0)) || (w.balance || 0);
+        const liveEquity = baseBalance + totalUnrealised;
+        const startBal = (w.startingBalance != null && w.startingBalance > 0) ? w.startingBalance : 10;
+        const overallPnl = liveEquity - startBal;
+        const liveReturnPct = startBal > 0 ? (overallPnl / startBal) * 100 : 0;
 
         const statCards = [
             {
                 label: 'Paper Equity',
                 value: `$${liveEquity.toFixed(2)}`,
-                sub: `Started at $${(w.startingBalance || 10000).toFixed(0)} · PnL: ${overallPnl >= 0 ? '+' : ''}$${overallPnl.toFixed(2)}`,
+                inr: `≈ ₹${(liveEquity * 85).toFixed(2)}`,
+                sub: `Started at $${startBal.toFixed(0)} · PnL: ${overallPnl >= 0 ? '+' : ''}$${overallPnl.toFixed(2)} (≈ ${overallPnl >= 0 ? '+' : '-'}₹${(Math.abs(overallPnl) * 85).toFixed(2)})`,
                 color: 'text-crypto-heading',
                 icon: '📄',
             },
             {
                 label: 'Available Margin',
                 value: `$${(w.available || 0).toFixed(2)}`,
-                sub: `Locked: $${(w.used || 0).toFixed(2)}`,
+                inr: `≈ ₹${((w.available || 0) * 85).toFixed(2)}`,
+                sub: `Locked: $${(w.used || 0).toFixed(2)} (≈ ₹${((w.used || 0) * 85).toFixed(2)})`,
                 color: 'text-crypto-success',
                 icon: '✅',
             },
@@ -123,6 +159,7 @@ const PortfolioSummary = () => {
                                 <span className="text-sm md:text-lg">{card.icon}</span>
                             </div>
                             <p className={`text-lg md:text-2xl font-bold tabular-nums ${card.color}`}>{card.value}</p>
+                            {card.inr && <p className="text-[11px] font-semibold text-crypto-muted tabular-nums mt-0.5">{card.inr}</p>}
                             <p className="text-[10px] text-crypto-muted mt-1 leading-snug">{card.sub}</p>
                         </div>
                     ))}
@@ -157,7 +194,10 @@ const PortfolioSummary = () => {
                                                 </td>
                                                 <td className="px-3 md:px-5 py-2 md:py-3 text-right tabular-nums text-xs hidden sm:table-cell">${parseFloat(p.entryPrice).toFixed(2)}</td>
                                                 <td className={`px-3 md:px-5 py-2 md:py-3 text-right font-semibold tabular-nums text-xs md:text-sm ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                                    {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                                                    <div>{pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</div>
+                                                    <div className="text-[10px] font-bold opacity-80">
+                                                        ≈ {pnl >= 0 ? '+' : '-'}₹{(Math.abs(pnl) * 85).toFixed(2)}
+                                                    </div>
                                                 </td>
                                                 <td className={`px-3 md:px-5 py-2 md:py-3 text-right font-semibold tabular-nums text-xs hidden sm:table-cell ${roe >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                                                     {roe >= 0 ? '+' : ''}{roe.toFixed(1)}%
@@ -225,6 +265,7 @@ const PortfolioSummary = () => {
         {
             label: 'Total Equity',
             value: `$${total.toFixed(2)}`,
+            inr: `≈ ₹${(total * 85).toFixed(2)}`,
             sub: usdBalance.asset_symbol || 'USD',
             color: 'text-crypto-heading',
             icon: '💰'
@@ -232,6 +273,7 @@ const PortfolioSummary = () => {
         {
             label: 'Available Margin',
             value: `$${available.toFixed(2)}`,
+            inr: `≈ ₹${(available * 85).toFixed(2)}`,
             sub: 'Free to trade',
             color: 'text-emerald-400',
             icon: '✅'
@@ -239,6 +281,7 @@ const PortfolioSummary = () => {
         {
             label: 'Margin Used',
             value: `$${marginUsed.toFixed(2)}`,
+            inr: `≈ ₹${(marginUsed * 85).toFixed(2)}`,
             sub: `${positions.length} open position${positions.length !== 1 ? 's' : ''}`,
             color: marginUsed > 0 ? 'text-amber-400' : 'text-crypto-muted',
             icon: '🔒'
@@ -264,6 +307,7 @@ const PortfolioSummary = () => {
                             <span className="text-sm md:text-lg">{card.icon}</span>
                         </div>
                         <p className={`text-lg md:text-2xl font-bold tabular-nums ${card.color}`}>{card.value}</p>
+                        {card.inr && <p className="text-[11px] font-semibold text-crypto-muted tabular-nums mt-0.5">{card.inr}</p>}
                         <p className="text-[10px] text-crypto-muted mt-1">{card.sub}</p>
                     </div>
                 ))}
@@ -286,14 +330,18 @@ const PortfolioSummary = () => {
                             </thead>
                             <tbody className="divide-y divide-crypto-border/50">
                                 {positions.map(p => {
-                                    const pnl = parseFloat(p.unrealized_pnl);
+                                    const pnl = parseFloat(p.unrealized_pnl || 0);
+                                    const inrPnl = p.unrealized_pnl_inr != null ? parseFloat(p.unrealized_pnl_inr) : (pnl * 85);
                                     return (
                                         <tr key={p.id} className="hover:bg-crypto-card-hover transition-colors">
                                             <td className="px-3 md:px-5 py-2 md:py-3 font-semibold text-crypto-heading text-xs md:text-sm">{p.product_symbol}</td>
                                             <td className="px-3 md:px-5 py-2 md:py-3 text-right tabular-nums text-xs hidden sm:table-cell">{p.size}</td>
                                             <td className="px-3 md:px-5 py-2 md:py-3 text-right tabular-nums text-xs hidden sm:table-cell">${parseFloat(p.entry_price).toFixed(2)}</td>
                                             <td className={`px-3 md:px-5 py-2 md:py-3 text-right font-semibold tabular-nums text-xs md:text-sm ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                                {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                                                <div>{pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</div>
+                                                <div className="text-[10px] font-bold opacity-80">
+                                                    ≈ {inrPnl >= 0 ? '+' : '-'}₹{(Math.abs(inrPnl)).toFixed(2)}
+                                                </div>
                                             </td>
                                         </tr>
                                     );
