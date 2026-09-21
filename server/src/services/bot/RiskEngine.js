@@ -120,21 +120,33 @@ function calcRisk(params) {
     // ── Step 5: Position sizing ───────────────────────────────────────────────
     // contractValue: how many USDT each contract represents at par
     const contractValue = parseFloat(productSpec?.contract_value || 1);
+    const minQty        = parseFloat(productSpec?.min_quantity || 1);
+    const tickSize      = parseFloat(productSpec?.tick_size    || 0.001);
 
-    // qty (contracts) such that if price moves by slDistance, loss ≈ riskAmt
-    const rawQty = riskAmt / (contractValue * slDistance);
+    // Maximum contracts affordable within real available balance at this leverage
+    const maxQtyFromBalance = Math.floor((actualAvailableBalance * leverage) / (contractValue * entryPrice));
 
-    // Contract size constraints from ProductCatalog
-    const minQty      = parseFloat(productSpec?.min_quantity || 1);
-    const tickSize    = parseFloat(productSpec?.tick_size    || 0.001);
+    let qty;
+    const walletParts = config.walletParts > 0 ? config.walletParts : 2;
 
-    // Cap qty by margin budget constraint: can't use more margin than effective budget
-    const maxQtyFromMargin = Math.floor((effectiveBudget * leverage) / (contractValue * entryPrice));
+    if (walletParts) {
+        // Divide wallet balance into N parts:
+        // Target Margin per trade = effectiveBudget / walletParts
+        // Target Notional per trade = targetMargin * leverage
+        // E.g. $10 budget / 2 parts = ~$5 margin * 20x leverage = ~$100 overall trade
+        const targetMargin   = effectiveBudget / walletParts;
+        const targetNotional = targetMargin * leverage;
+        const rawQtyFromParts = Math.round(targetNotional / (contractValue * entryPrice));
 
-    // For wide SL (high win rate), rawQty can be small. If rawQty < minQty but minQty is affordable, clamp to minQty!
-    let qty = Math.min(Math.floor(rawQty), maxQtyFromMargin);
-    if (qty < minQty && maxQtyFromMargin >= minQty) {
-        qty = minQty;
+        qty = Math.min(Math.max(minQty, rawQtyFromParts), maxQtyFromBalance);
+    } else {
+        // Fallback: ATR-risk sizing
+        const rawQty = riskAmt / (contractValue * slDistance);
+        const maxQtyFromBudget = Math.floor((effectiveBudget * leverage) / (contractValue * entryPrice));
+        qty = Math.min(Math.floor(rawQty), maxQtyFromBudget, maxQtyFromBalance);
+        if (qty < minQty && maxQtyFromBudget >= minQty) {
+            qty = minQty;
+        }
     }
 
     if (qty < minQty) {
@@ -143,6 +155,9 @@ function calcRisk(params) {
 
     // ── Step 6: Margin check ──────────────────────────────────────────────────
     const margin = (qty * contractValue * entryPrice) / leverage;
+    if (margin > actualAvailableBalance) {
+        return fail(`Required margin ($${margin.toFixed(2)}) exceeds available balance ($${actualAvailableBalance.toFixed(2)})`);
+    }
 
     // ── Step 7: Take Profit — targeted ROI or ATR momentum ───────────────────
     // If targetRoiPct is configured (e.g. 5% ROI on margin):

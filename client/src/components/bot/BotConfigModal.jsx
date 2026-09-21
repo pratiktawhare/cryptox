@@ -19,6 +19,7 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
     const [scanIntervalMinutes, setScanIntervalMinutes] = useState(config.scanIntervalMinutes ?? 5);
     const [aiEnabled, setAiEnabled] = useState(config.aiEnabled ?? true);
     const [aiIntervalSeconds, setAiIntervalSeconds] = useState(config.aiIntervalSeconds ?? 1800);
+    const [walletParts, setWalletParts] = useState(config.walletParts ?? 1);
 
     const [saving, setSaving] = useState(false);
     const [errorMsg, setErrorMsg] = useState('');
@@ -39,6 +40,7 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
             setScanIntervalMinutes(config.scanIntervalMinutes ?? 5);
             setAiEnabled(config.aiEnabled ?? true);
             setAiIntervalSeconds(config.aiIntervalSeconds ?? 1800);
+            setWalletParts(config.walletParts ?? 1);
         }
     }, [config, mode]);
 
@@ -71,6 +73,7 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                 scanIntervalMinutes: Number(scanIntervalMinutes),
                 aiEnabled: Boolean(aiEnabled),
                 aiIntervalSeconds: Number(aiIntervalSeconds),
+                walletParts: Number(walletParts),
             });
             onClose();
         } catch (err) {
@@ -95,6 +98,7 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
         setScanIntervalMinutes(5);
         setAiEnabled(true);
         setAiIntervalSeconds(1800);
+        setWalletParts(1);
     };
 
     const handleResetPaperWallet = async () => {
@@ -386,6 +390,52 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                             <p className="text-[11px] text-crypto-muted mt-1.5">
                                 Allow the bot to open multiple affordable coin setups concurrently without blocking on 1 trade.
                             </p>
+                        </div>
+
+                        {/* Wallet Parts Divider */}
+                        <div className="p-4 bg-crypto-bg border border-crypto-border rounded-2xl space-y-3">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <label className="text-xs font-bold text-crypto-heading flex items-center gap-1.5">
+                                        <span>🍕</span> Wallet Parts (Trade Sizing)
+                                    </label>
+                                    <span className="text-[11px] text-crypto-muted">
+                                        Divide your budget into equal parts — each part is one trade's margin
+                                    </span>
+                                </div>
+                                <span className="px-2.5 py-1 rounded-lg bg-crypto-primary/10 border border-crypto-primary/20 text-crypto-primary text-xs font-black tabular-nums">
+                                    {walletParts === 1 ? 'Full Budget' : `1 / ${walletParts} per trade`}
+                                </span>
+                            </div>
+
+                            {/* Part presets */}
+                            <div className="grid grid-cols-6 gap-2">
+                                {[1, 2, 3, 4, 5, 10].map(p => (
+                                    <button
+                                        type="button"
+                                        key={p}
+                                        onClick={() => setWalletParts(p)}
+                                        className={`py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                                            walletParts === p
+                                                ? 'bg-crypto-primary text-white border-crypto-primary shadow-md shadow-crypto-primary/25'
+                                                : 'bg-crypto-card border-crypto-border text-crypto-muted hover:text-crypto-heading'
+                                        }`}
+                                    >
+                                        {p === 1 ? 'Full' : `÷${p}`}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Live calculation preview */}
+                            <div className="p-3 bg-crypto-primary/10 border border-crypto-primary/20 rounded-xl flex items-start gap-2.5">
+                                <div className="text-base flex-shrink-0">💡</div>
+                                <div className="text-[11px] text-crypto-muted leading-relaxed">
+                                    With a <strong className="text-crypto-heading">${parseFloat(budget || 0).toFixed(2)} budget</strong> split into{' '}
+                                    <strong className="text-crypto-primary">{walletParts} part{walletParts !== 1 ? 's' : ''}</strong>, each trade uses{' '}
+                                    <strong className="text-crypto-heading">${(parseFloat(budget || 0) / walletParts).toFixed(2)} margin</strong>{' '}
+                                    → <strong className="text-crypto-primary">${((parseFloat(budget || 0) / walletParts) * leverage).toFixed(2)} notional</strong> at {leverage}x leverage.
+                                </div>
+                            </div>
                         </div>
                     </div>
 

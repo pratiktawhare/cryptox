@@ -246,7 +246,7 @@ router.put('/config/:mode', async (req, res) => {
         'minSignalScore', 'slAtrMultiplier', 'tpSafetyMultiplier',
         'maxLeverage', 'maxOpenPositions', 'scanIntervalMinutes',
         'aiEnabled', 'aiRequired', 'aiIntervalSeconds', 'enabled',
-        'targetRoiPct', 'reverseMode',
+        'targetRoiPct', 'reverseMode', 'walletParts',
     ];
 
     const updates = {};

@@ -63,9 +63,11 @@ function filterAffordable(symbols, config, actualAvailableBalance, wsManager, pr
         // margin = notional / leverage = (qty × contractValue × price) / leverage
         const leverage   = config.maxLeverage > 0 ? config.maxLeverage : 20;
         const minCost    = (spec.minQty * spec.contractValue * price) / leverage;
-        const maxAllowedMargin = Math.max(riskAmount, effectiveBudget * 0.1);
+        const walletParts = config.walletParts > 0 ? config.walletParts : 2;
+        const targetMargin = effectiveBudget / walletParts;
+        const maxAllowedMargin = Math.max(targetMargin, riskAmount, effectiveBudget * 0.5);
 
-        if (minCost <= maxAllowedMargin && minCost <= effectiveBudget) {
+        if (minCost <= maxAllowedMargin && minCost <= actualAvailableBalance) {
             affordable.push(symbol);
         } else {
             skipped.push({

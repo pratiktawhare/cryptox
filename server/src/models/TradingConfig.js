@@ -36,6 +36,17 @@ const tradingConfigSchema = new mongoose.Schema(
             default: 10,
         },
 
+        // ── Wallet Balance Split (Parts) ────────────────────────────────────
+        // Divides effective budget into N parts to size each trade's margin.
+        // E.g. $10 budget / 2 parts = ~$5 margin per trade.
+        // With 20x leverage = ~$100 overall trade notional size.
+        walletParts: {
+            type: Number,
+            default: 2,
+            min: 1,
+            max: 50,
+        },
+
         // ── Risk Settings ───────────────────────────────────────────────────
         // % of effectiveBudget risked per trade
         riskPerTradePct: {
