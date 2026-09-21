@@ -87,6 +87,9 @@ const botTradeSchema = new mongoose.Schema(
         // ── Budget snapshot at entry (for audit) ────────────────────────────
         walletBalanceAtEntry:  { type: Number, default: null },
         effectiveBudgetAtEntry: { type: Number, default: null },
+
+        // ── Strategy Direction Mode ─────────────────────────────────────────
+        reverseMode: { type: Boolean, default: false },
     },
     {
         timestamps: true,

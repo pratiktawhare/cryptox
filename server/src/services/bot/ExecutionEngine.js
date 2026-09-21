@@ -102,6 +102,7 @@ class ExecutionEngine {
             io = null,
             wsManager = null,
             orderType = 'market_order',
+            reverseMode = false,
         } = params;
 
         // 1. Guard against concurrent entry
@@ -161,6 +162,7 @@ class ExecutionEngine {
                     io,
                     wsManager,
                     orderType,
+                    reverseMode,
                 });
             } else if (mode === 'live') {
                 return await this._executeLive({
@@ -180,6 +182,7 @@ class ExecutionEngine {
                     productSpec,
                     io,
                     orderType,
+                    reverseMode,
                 });
             } else {
                 throw new Error(`Invalid trading mode: ${mode}`);
@@ -221,6 +224,30 @@ class ExecutionEngine {
             }
         }
 
+        // ── Re-anchor SL/TP to actual fill price ──────────────────────────────
+        // RiskEngine computes SL/TP as offsets from entryPrice (snapshot.close).
+        // If fillPrice differs (market moved between scan and execution), we must
+        // shift SL and TP by the same delta so the intended distance geometry is preserved.
+        // Without this, a SHORT with TP $0.60 below snapshot could end up only $0.06
+        // from the actual fill price — mathematically impossible to win.
+        const spec = productSpec || productCatalog.getBySymbol(symbol);
+        const contractValue = parseFloat(spec?.contract_value || 1);
+        const tickSize = parseFloat(spec?.tick_size || 0.001);
+
+        const roundToTick = (price, tick) => {
+            if (!tick || tick <= 0) return price;
+            return parseFloat((Math.round(price / tick) * tick).toFixed(8));
+        };
+
+        let adjStopLoss   = stopLoss;
+        let adjTakeProfit = takeProfit;
+        if (fillPrice !== entryPrice && entryPrice > 0) {
+            const priceDelta = fillPrice - entryPrice;
+            adjStopLoss   = roundToTick(stopLoss   + priceDelta, tickSize);
+            adjTakeProfit = roundToTick(takeProfit  + priceDelta, tickSize);
+            console.log(`[ExecutionEngine] 📍 Adjusted SL/TP for price slippage: entry $${entryPrice} → fill $${fillPrice} (Δ${priceDelta > 0 ? '+' : ''}${priceDelta.toFixed(4)}). New SL=$${adjStopLoss}, TP=$${adjTakeProfit}`);
+        }
+
         // Check PaperWallet has enough available margin
         let wallet = await PaperWallet.findOne({ userId });
         if (!wallet) {
@@ -234,16 +261,15 @@ class ExecutionEngine {
         }
 
         // Calculate estimated fees via CostEngine
-        const spec = productSpec || productCatalog.getBySymbol(symbol);
-        const contractValue = parseFloat(spec?.contract_value || 1);
         const estimatedCosts = calcTradeCosts({
             entryPrice: fillPrice,
-            targetPrice: takeProfit,
-            stopPrice: stopLoss,
+            targetPrice: adjTakeProfit,
+            stopPrice: adjStopLoss,
             direction,
             qty: quantity,
             contractValue,
         });
+
 
         // 1. Lock margin in PaperWallet
         wallet.available -= margin;
@@ -264,14 +290,15 @@ class ExecutionEngine {
             contractValue,
             entryPrice: fillPrice,
             leverage,
-            stopLoss,
-            takeProfit,
+            stopLoss:   adjStopLoss,
+            takeProfit: adjTakeProfit,
             marginUsed: margin,
             markPrice: fillPrice,
             unrealisedPnl: 0,
             roe: 0,
             liquidationPrice: liqPrice,
             source: 'automation',
+            reverseMode: Boolean(params.reverseMode),
             status: 'open',
         });
 
@@ -282,8 +309,8 @@ class ExecutionEngine {
             symbol,
             direction,
             entryPrice: fillPrice,
-            stopLoss,
-            takeProfit,
+            stopLoss:   adjStopLoss,
+            takeProfit: adjTakeProfit,
             quantity,
             contractValue,
             leverage,
@@ -296,6 +323,7 @@ class ExecutionEngine {
             regime,
             walletBalanceAtEntry: walletBalanceAtEntry || wallet.balance,
             effectiveBudgetAtEntry: effectiveBudgetAtEntry || Math.min(wallet.balance, 10),
+            reverseMode: Boolean(params.reverseMode),
         });
 
         // Link position to trade if desired
@@ -499,6 +527,7 @@ class ExecutionEngine {
             regime,
             walletBalanceAtEntry,
             effectiveBudgetAtEntry,
+            reverseMode: Boolean(params.reverseMode),
         });
 
         await this._logEvent(userId, 'live', 'POSITION_OPENED', 'info',
@@ -571,7 +600,7 @@ class ExecutionEngine {
                 const isLong = trade.direction === 'long';
                 const priceDiff = isLong ? (closePrice - trade.entryPrice) : (trade.entryPrice - closePrice);
                 const grossPnl = priceDiff * trade.quantity * contractValue;
-                const exitFee = (closePrice * trade.quantity * contractValue) * 0.0005; // taker fee
+                const exitFee = (trade.entryPrice * trade.quantity * contractValue) * 0.0005; // taker fee on entry notional (matches CostEngine basis)
                 const totalFees = (trade.fees || 0) + exitFee;
                 const netPnl = grossPnl - totalFees;
 

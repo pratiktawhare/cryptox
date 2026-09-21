@@ -15,6 +15,9 @@ export default function BotHeader({
     onOpenConfig,
     actionLoading,
     actionState,
+    reverseMode = false,
+    onToggleReverse,
+    reverseModeLoading = false,
 }) {
     const [showEmergencyConfirm, setShowEmergencyConfirm] = useState(false);
 
@@ -137,6 +140,38 @@ export default function BotHeader({
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
                             </svg>
                             <span className="hidden sm:inline">{isScanning ? 'Scanning…' : 'Scan Now'}</span>
+                        </button>
+
+                        {/* Fade Rally / Reverse Mode Toggle */}
+                        <button
+                            type="button"
+                            onClick={onToggleReverse}
+                            disabled={reverseModeLoading || actionLoading}
+                            title={reverseMode
+                                ? 'Fade Rally ON: Bot shorts rallies & longs dumps. Click to disable.'
+                                : 'Fade Rally OFF: Bot follows trend. Click to enable counter-trend scalping.'}
+                            className={`px-3 py-2.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                                reverseMode
+                                    ? 'bg-violet-500/15 border-violet-500/40 text-violet-400 shadow-sm shadow-violet-500/10'
+                                    : 'bg-crypto-bg border-crypto-border text-crypto-muted hover:text-crypto-heading hover:border-violet-500/30'
+                            }`}
+                        >
+                            {reverseModeLoading ? (
+                                <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                                </svg>
+                            ) : (
+                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M17 1l4 4-4 4" />
+                                    <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+                                    <path d="M7 23l-4-4 4-4" />
+                                    <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+                                </svg>
+                            )}
+                            <span className="hidden sm:inline">{reverseMode ? '🔄 Fade Rally' : 'Fade Rally'}</span>
+                            {reverseMode && (
+                                <span className="hidden md:inline text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/20 text-violet-300 font-black tracking-wider">ON</span>
+                            )}
                         </button>
 
                         {/* Config */}

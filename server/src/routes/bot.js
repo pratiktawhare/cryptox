@@ -246,7 +246,7 @@ router.put('/config/:mode', async (req, res) => {
         'minSignalScore', 'slAtrMultiplier', 'tpSafetyMultiplier',
         'maxLeverage', 'maxOpenPositions', 'scanIntervalMinutes',
         'aiEnabled', 'aiRequired', 'aiIntervalSeconds', 'enabled',
-        'targetRoiPct',
+        'targetRoiPct', 'reverseMode',
     ];
 
     const updates = {};
@@ -273,6 +273,30 @@ router.put('/config/:mode', async (req, res) => {
         }
 
         res.json({ success: true, config });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── POST /api/bot/toggle-reverse ───────────────────────────────────────────────
+router.post('/toggle-reverse', async (req, res) => {
+    const { mode, reverseMode } = req.body;
+    if (!['paper', 'live'].includes(mode)) {
+        return res.status(400).json({ error: 'mode must be "paper" or "live"' });
+    }
+
+    try {
+        const userId = req.user.id;
+        const current = await TradingConfig.findOne({ userId, mode });
+        const nextVal = typeof reverseMode === 'boolean' ? reverseMode : !current?.reverseMode;
+
+        const config = await TradingConfig.findOneAndUpdate(
+            { userId, mode },
+            { $set: { reverseMode: nextVal } },
+            { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
+        );
+
+        res.json({ success: true, mode, reverseMode: config.reverseMode, config });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

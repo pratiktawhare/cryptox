@@ -555,11 +555,18 @@ class TradingBot {
         }
 
         // ── 6. Risk Engine & Cost Validation ──────────────────────────────────
+        let tradeDirection = best.scoreResult.direction;
+        const isReverse = config.reverseMode === true;
+        if (isReverse) {
+            tradeDirection = tradeDirection === 'long' ? 'short' : 'long';
+            console.log(`[TradingBot] 🔄 REVERSE MODE ACTIVE: Inverting signal ${best.scoreResult.direction?.toUpperCase()} → ${tradeDirection.toUpperCase()} on ${best.symbol} (fading rally/dump)`);
+        }
+
         const riskResult = calcRisk({
             config,
             actualAvailableBalance: availableBalance,
             symbol: best.symbol,
-            direction: best.scoreResult.direction,
+            direction: tradeDirection,
             entryPrice: best.snapshot.close,
             atr: best.snapshot['5m'].atr,
             spread: best.snapshot.spread,
@@ -573,7 +580,7 @@ class TradingBot {
             await this._recordSignal({
                 userId,
                 symbol: best.symbol,
-                direction: best.scoreResult.direction,
+                direction: tradeDirection,
                 score: best.scoreResult.score,
                 conditions: best.scoreResult.conditions,
                 snapshot: best.snapshot,
@@ -582,27 +589,28 @@ class TradingBot {
                 groqConfidence: best.groqResult?.confidence,
                 groqRiskAdj: best.groqResult?.riskAdjustment,
                 decision: 'SKIPPED_RISK',
-                rejectReason: `RiskEngine rejected: ${riskResult.reason}`,
+                rejectReason: `RiskEngine rejected (${isReverse ? 'REVERSED: ' : ''}${riskResult.reason})`,
                 walletBalance: availableBalance,
                 effectiveBudget,
                 affordableSymbols: affordableSymbols.length,
                 totalScanned: allSymbols.length,
+                reverseMode: isReverse,
             });
 
             await this._logEvent(userId, 'TRADE_REJECTED', 'warn',
-                `Signal on ${best.symbol} rejected by risk engine: ${riskResult.reason}`
+                `Signal on ${best.symbol} (${isReverse ? 'REVERSED ' : ''}${tradeDirection.toUpperCase()}) rejected by risk engine: ${riskResult.reason}`
             );
             return;
         }
 
         // ── 7. Order Execution ─────────────────────────────────────────────────
-        console.log(`[TradingBot] 🚀 Executing trade: ${best.scoreResult.direction.toUpperCase()} ${riskResult.qty} ${best.symbol} (Margin: $${riskResult.margin.toFixed(2)})`);
+        console.log(`[TradingBot] 🚀 Executing trade: ${isReverse ? '[REVERSED] ' : ''}${tradeDirection.toUpperCase()} ${riskResult.qty} ${best.symbol} (Margin: $${riskResult.margin.toFixed(2)})`);
 
         const execResult = await executionEngine.executeTrade({
             userId,
             mode: this.mode,
             symbol: best.symbol,
-            direction: best.scoreResult.direction,
+            direction: tradeDirection,
             entryPrice: riskResult.entryPrice,
             stopLoss: riskResult.stopLoss,
             takeProfit: riskResult.takeProfit,
@@ -616,13 +624,14 @@ class TradingBot {
             productSpec: this.productCatalog.getBySymbol(best.symbol),
             io: this.io,
             wsManager: this.wsManager,
+            reverseMode: isReverse,
         });
 
         // Record successful trade signal
         const botSignal = await this._recordSignal({
             userId,
             symbol: best.symbol,
-            direction: best.scoreResult.direction,
+            direction: tradeDirection,
             score: best.scoreResult.score,
             conditions: best.scoreResult.conditions,
             snapshot: best.snapshot,
@@ -637,6 +646,7 @@ class TradingBot {
             affordableSymbols: affordableSymbols.length,
             totalScanned: allSymbols.length,
             botTradeId: execResult.trade?._id || null,
+            reverseMode: isReverse,
         });
 
         if (execResult.success) {
@@ -687,6 +697,7 @@ class TradingBot {
                 affordableSymbols: data.affordableSymbols,
                 totalScanned: data.totalScanned,
                 botTradeId: data.botTradeId,
+                reverseMode: data.reverseMode || false,
             });
 
             if (this.io) {

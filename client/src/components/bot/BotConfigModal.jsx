@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../services/api';
 
-export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'paper', onSave }) {
+export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'paper', onSave, reverseMode = false }) {
     const [budget, setBudget] = useState(String(config.budgetUSDT ?? 10));
     const [resetWalletBalance, setResetWalletBalance] = useState('10');
     const [resettingWallet, setResettingWallet] = useState(false);
@@ -584,7 +584,54 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                         </div>
                     </div>
 
-                    {/* Footer Actions */}
+                    {/* Section 4: Trading Direction */}
+                    <div className="space-y-3 pt-4 border-t border-crypto-border/60">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-crypto-primary">
+                            4. Trading Direction
+                        </h3>
+                        <div className={`p-3.5 rounded-2xl border flex items-start gap-3 ${
+                            reverseMode
+                                ? 'bg-violet-500/10 border-violet-500/25'
+                                : 'bg-crypto-bg border-crypto-border/80'
+                        }`}>
+                            <div className={`mt-0.5 w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                                reverseMode ? 'bg-violet-500/20 text-violet-400' : 'bg-crypto-primary/10 text-crypto-primary'
+                            }`}>
+                                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M17 1l4 4-4 4" />
+                                    <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+                                    <path d="M7 23l-4-4 4-4" />
+                                    <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+                                </svg>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <span className={`text-xs font-black ${
+                                        reverseMode ? 'text-violet-400' : 'text-crypto-heading'
+                                    }`}>
+                                        {reverseMode ? '🔄 Fade Rally Mode — ACTIVE' : 'Trend-Following Mode — ACTIVE'}
+                                    </span>
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                                        reverseMode
+                                            ? 'bg-violet-500/20 text-violet-300'
+                                            : 'bg-emerald-500/15 text-emerald-400'
+                                    }`}>
+                                        {reverseMode ? 'Counter-Trend' : 'With-Trend'}
+                                    </span>
+                                </div>
+                                <p className="text-[11px] text-crypto-muted leading-relaxed">
+                                    {reverseMode
+                                        ? 'The bot is entering OPPOSITE the detected signal direction. Bullish setups → Short. Bearish setups → Long. Great for fading overbought rallies with small TP + wide SL.'
+                                        : 'The bot follows the trend direction: Bullish setups → Long, Bearish setups → Short.'}
+                                </p>
+                                <p className="text-[10px] text-crypto-muted mt-1.5">
+                                    Toggle this mode using the <strong className="text-crypto-heading">🔄 Fade Rally</strong> button in the header bar.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+
                     <div className="pt-4 border-t border-crypto-border flex items-center justify-between gap-3">
                         <button
                             type="button"

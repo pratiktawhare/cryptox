@@ -299,6 +299,10 @@ export default function TradingBot() {
 
     // Track detailed action phase ('starting' | 'stopping' | 'scanning' | null)
     const [actionState, setActionState] = useState(null);
+    const [reverseModeLoading, setReverseModeLoading] = useState(false);
+
+    // Derive reverseMode from the current mode's config in statusData
+    const reverseMode = Boolean(currentModeStatus?.config?.reverseMode);
 
     // Actions
     const handleStart = async () => {
@@ -415,6 +419,18 @@ export default function TradingBot() {
         await fetchBotData();
     };
 
+    const handleToggleReverse = async () => {
+        setReverseModeLoading(true);
+        try {
+            await api.post('/bot/toggle-reverse', { mode });
+            await fetchBotData();
+        } catch (err) {
+            alert(err.response?.data?.error || err.message || 'Failed to toggle Fade Rally mode');
+        } finally {
+            setReverseModeLoading(false);
+        }
+    };
+
     // Construct live equity curve points from closed trades
     const equityCurveData = useMemo(() => {
         const initial = currentModeStatus?.config?.budgetUSDT || 10;
@@ -509,6 +525,9 @@ export default function TradingBot() {
                     onOpenConfig={() => setConfigModalOpen(true)}
                     actionLoading={actionLoading}
                     actionState={actionState}
+                    reverseMode={reverseMode}
+                    onToggleReverse={handleToggleReverse}
+                    reverseModeLoading={reverseModeLoading}
                 />
 
                 {/* 2. Top Stats & Telemetry Grid */}
@@ -559,6 +578,7 @@ export default function TradingBot() {
                 config={currentModeStatus?.config || {}}
                 mode={mode}
                 onSave={handleSaveConfig}
+                reverseMode={reverseMode}
             />
 
             {/* 409 Conflict Warning Dialog */}

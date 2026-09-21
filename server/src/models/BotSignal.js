@@ -90,6 +90,9 @@ const botSignalSchema = new mongoose.Schema(
             ref: 'BotTrade',
             default: null,
         },
+
+        // ── Strategy Direction Mode ─────────────────────────────────────────
+        reverseMode: { type: Boolean, default: false },
     },
     {
         timestamps: true,

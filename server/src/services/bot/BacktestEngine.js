@@ -255,12 +255,15 @@ class BacktestEngine {
                     // Next candle open simulates realistic execution without lookahead bias
                     const nextCandle = i + 1 < candles.length ? candles[i + 1] : null;
                     const entryPrice = nextCandle ? nextCandle.open : currentClose;
+                    const tradeDirection = stratConfig.reverseMode
+                        ? (scoreResult.direction === 'long' ? 'short' : 'long')
+                        : scoreResult.direction;
 
                     const riskResult = calcRisk({
                         config: stratConfig,
                         actualAvailableBalance: currentBalance,
                         symbol,
-                        direction: scoreResult.direction,
+                        direction: tradeDirection,
                         entryPrice,
                         atr: atr_5m,
                         spread: snapshot.spread,
@@ -273,7 +276,7 @@ class BacktestEngine {
                         const entryFee = entryPrice * riskResult.qty * contractValue * (0.0002 * 1.18); // 0.02% maker fee + 18% GST
                         openPosition = {
                             symbol,
-                            direction: scoreResult.direction,
+                            direction: tradeDirection,
                             entryTime: (nextCandle ? nextCandle.time : candle.time) * 1000,
                             entryPrice,
                             stopLoss: riskResult.stopLoss,
@@ -282,6 +285,7 @@ class BacktestEngine {
                             leverage: riskResult.leverage,
                             margin: riskResult.margin,
                             entryFee,
+                            reverseMode: Boolean(stratConfig.reverseMode),
                         };
                     }
                 }

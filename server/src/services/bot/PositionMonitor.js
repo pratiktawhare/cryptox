@@ -228,10 +228,15 @@ class PositionMonitor {
         const priceDiff = isLong ? (exitPrice - trade.entryPrice) : (trade.entryPrice - exitPrice);
         const grossPnl = priceDiff * trade.quantity * contractValue;
 
-        // Fees: Maker entry (0.02% + 18% GST) already logged + Taker exit fee (0.05% + 18% GST = 0.0590%)
-        const exitFee = exitPrice * trade.quantity * contractValue * (0.0005 * 1.18);
+        // Exit fee: taker rate on entry-price notional (matches CostEngine estimation basis)
+        // Note: do NOT subtract trade.slippage again here — it was already factored into the
+        // TP distance by RiskEngine via CostEngine.breakEvenAbs. Double-deducting it would
+        // turn TP hits into apparent losses on small/low-margin trades.
+        const entryNotional = trade.entryPrice * trade.quantity * contractValue;
+        const exitFee = entryNotional * (0.0005 * 1.18); // taker 0.05% + 18% GST
         const totalFees = (trade.fees || 0) + exitFee;
-        const netPnl = grossPnl - totalFees - (trade.slippage || 0);
+        const netPnl = grossPnl - totalFees;
+
         const isWin = netPnl >= 0;
 
         // 1. Update BotTrade

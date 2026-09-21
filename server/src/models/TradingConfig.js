@@ -139,6 +139,16 @@ const tradingConfigSchema = new mongoose.Schema(
             default: 1800, // 30 minutes
         },
 
+        // ── Counter-Trend / Reverse Strategy (Fade the Rally / Dump) ───────
+        // When true: Invert trade direction.
+        // If technical setup signals a peak bullish rally (LONG), enter SHORT to scalp the pullback.
+        // If technical setup signals a peak dump (SHORT), enter LONG to scalp the bounce.
+        // Preserves the small target ROI and wide safety stop loss.
+        reverseMode: {
+            type: Boolean,
+            default: false,
+        },
+
         // ── State ───────────────────────────────────────────────────────────
         // Whether this mode is currently enabled (persisted across restarts)
         enabled: {
