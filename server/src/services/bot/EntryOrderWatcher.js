@@ -1,0 +1,213 @@
+/**
+ * EntryOrderWatcher.js
+ *
+ * Background monitor for BotTrade records in 'pending_entry' state (live mode only).
+ *
+ * Runs every 10 seconds. For each pending entry:
+ *   - If the limit order filled on Delta → activate the trade (result: 'open').
+ *   - If Delta already cancelled/rejected it → mark it cancelled in DB.
+ *   - If 15 minutes have elapsed without a fill → cancel ONLY that entry order on Delta.
+ *     NEVER calls cancelAllOrders — bracket TP/SL of other open positions are safe.
+ *
+ * Paper mode: not applicable — paper fills are simulated instantly at entry.
+ */
+
+const BotTrade          = require('../../models/BotTrade');
+const BotEvent          = require('../../models/BotEvent');
+const ApiKey            = require('../../models/ApiKey');
+const DeltaOrderClient  = require('../trading/DeltaOrderClient');
+const executionEngine   = require('./ExecutionEngine');
+const { decryptData }   = require('../../utils/encryption');
+
+const ENTRY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+const POLL_INTERVAL_MS = 10_000;          // 10 seconds
+
+class EntryOrderWatcher {
+    constructor() {
+        this.io      = null;
+        this._timer  = null;
+        this._busy   = false;
+    }
+
+    // ── Lifecycle ───────────────────────────────────────────────────────────────
+
+    start(io = null) {
+        if (this._timer) return;
+        this.io     = io;
+        this._timer = setInterval(() => this._tick(), POLL_INTERVAL_MS);
+        console.log(`[EntryOrderWatcher] ⏳ Started — checking pending entries every ${POLL_INTERVAL_MS / 1000}s (timeout: ${ENTRY_TIMEOUT_MS / 60000} min)`);
+    }
+
+    stop() {
+        if (this._timer) {
+            clearInterval(this._timer);
+            this._timer = null;
+            console.log('[EntryOrderWatcher] Stopped.');
+        }
+    }
+
+    // ── Main Tick ───────────────────────────────────────────────────────────────
+
+    async _tick() {
+        if (this._busy) return;
+        this._busy = true;
+
+        try {
+            const pendingTrades = await BotTrade.find({ mode: 'live', result: 'pending_entry' });
+            if (!pendingTrades || pendingTrades.length === 0) return;
+
+            for (const trade of pendingTrades) {
+                try {
+                    await this._checkPendingTrade(trade);
+                } catch (err) {
+                    console.error(`[EntryOrderWatcher] Error checking trade ${trade._id} (${trade.symbol}):`, err.message);
+                }
+            }
+        } catch (err) {
+            console.error('[EntryOrderWatcher] Tick error:', err.message);
+        } finally {
+            this._busy = false;
+        }
+    }
+
+    // ── Per-Trade Logic ─────────────────────────────────────────────────────────
+
+    async _checkPendingTrade(trade) {
+        const orderId = trade.pendingEntryOrderId;
+        if (!orderId) {
+            await this._markCancelled(trade, 'missing_order_id');
+            return;
+        }
+
+        const client = await this._buildDeltaClient(trade.userId);
+        if (!client) return; // No API key — retry next tick
+
+        let orderData;
+        try {
+            const resp = await client.getOrder(orderId);
+            orderData  = resp?.result;
+        } catch (err) {
+            console.warn(`[EntryOrderWatcher] Could not fetch order ${orderId} (${trade.symbol}):`, err.message);
+            return;
+        }
+
+        if (!orderData) return;
+
+        const state = orderData.state;
+
+        // ── Case 1: Filled ──────────────────────────────────────────────────────
+        if (state === 'closed' || state === 'filled') {
+            console.log(`[EntryOrderWatcher] ✅ Order ${orderId} filled for ${trade.symbol}. Activating trade.`);
+            await executionEngine._activateLiveTrade({
+                userId:                 trade.userId,
+                symbol:                 trade.symbol,
+                direction:              trade.direction,
+                entryPrice:             trade.entryPrice,
+                stopLoss:               trade.stopLoss,
+                takeProfit:             trade.takeProfit,
+                quantity:               trade.quantity,
+                leverage:               trade.leverage,
+                margin:                 trade.margin,
+                signalScore:            trade.signalScore,
+                regime:                 trade.regime,
+                walletBalanceAtEntry:   trade.walletBalanceAtEntry,
+                effectiveBudgetAtEntry: trade.effectiveBudgetAtEntry,
+                io:                     this.io,
+                orderId,
+                filledOrder:            orderData,
+                reverseMode:            trade.reverseMode,
+                existingTradeId:        trade._id,  // update the pending_entry record in-place
+            });
+            return;
+        }
+
+        // ── Case 2: Cancelled or rejected by exchange ───────────────────────────
+        if (state === 'cancelled' || state === 'rejected') {
+            console.log(`[EntryOrderWatcher] ❌ Order ${orderId} was ${state} by Delta for ${trade.symbol}.`);
+            await this._markCancelled(trade, `exchange_${state}`);
+            return;
+        }
+
+        // ── Case 3: Still open — check 15-minute timeout ────────────────────────
+        const elapsedMs = Date.now() - new Date(trade.entryOrderPlacedAt || trade.entryTime).getTime();
+        if (elapsedMs >= ENTRY_TIMEOUT_MS) {
+            console.log(`[EntryOrderWatcher] ⏰ Order ${orderId} timed out after ${Math.round(elapsedMs / 60000)} min for ${trade.symbol}. Cancelling entry order only.`);
+
+            // Cancel ONLY the specific entry order by ID — NEVER cancelAllOrders
+            try {
+                await client.cancelOrder(orderId, trade.symbol);
+            } catch (cancelErr) {
+                // May already be gone — log and continue to mark DB anyway
+                console.warn(`[EntryOrderWatcher] Cancel order ${orderId} warn:`, cancelErr.message);
+                await this._logEvent(trade.userId, 'ENTRY_ORDER_CANCEL_WARN', 'warn',
+                    `Cancel attempt for timed-out order ${orderId} returned: ${cancelErr.message}`,
+                    { orderId, symbol: trade.symbol }
+                );
+            }
+
+            await this._logEvent(trade.userId, 'ENTRY_ORDER_CANCELLED', 'warn',
+                `[Live] Limit entry order ${orderId} for ${trade.symbol} cancelled after 15 min timeout. No fill received.`,
+                { orderId, symbol: trade.symbol, elapsedMs }
+            );
+
+            await this._markCancelled(trade, 'entry_timeout');
+        }
+        // else: still within 15 min and still open — do nothing, retry next tick
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────────
+
+    async _markCancelled(trade, reason) {
+        trade.result           = 'cancelled';
+        trade.exitReason       = 'entry_timeout';
+        trade.entryOrderStatus = reason === 'entry_timeout' ? 'timeout' : 'cancelled';
+        trade.exitTime         = new Date();
+        await trade.save();
+
+        await this._logEvent(trade.userId, 'TRADE_CANCELLED', 'warn',
+            `[Live] Pending entry for ${trade.symbol} cancelled: ${reason}`,
+            { tradeId: trade._id, symbol: trade.symbol, reason }
+        );
+
+        if (this.io) {
+            try {
+                this.io.to(`user:${trade.userId}`).emit('bot_trade_cancelled', {
+                    trade:  trade.toObject(),
+                    reason,
+                    mode:   'live',
+                });
+            } catch (e) { /* ignore */ }
+        }
+    }
+
+    async _buildDeltaClient(userId) {
+        try {
+            const apiKeyDoc = await ApiKey.findOne({ userId, exchange: 'delta', isActive: true });
+            if (!apiKeyDoc) return null;
+            const apiKey    = decryptData(apiKeyDoc.apiKeyEncrypted);
+            const apiSecret = decryptData(apiKeyDoc.apiSecretEncrypted);
+            return new DeltaOrderClient(apiKey, apiSecret);
+        } catch (err) {
+            console.error(`[EntryOrderWatcher] Failed to build Delta client:`, err.message);
+            return null;
+        }
+    }
+
+    async _logEvent(userId, type, severity, message, metadata = {}) {
+        try {
+            await BotEvent.create({
+                userId,
+                mode: 'live',
+                type,
+                severity,
+                message,
+                metadata,
+                timestamp: new Date(),
+            });
+        } catch (err) {
+            console.error(`[EntryOrderWatcher] Failed to log BotEvent:`, err.message);
+        }
+    }
+}
+
+module.exports = new EntryOrderWatcher();

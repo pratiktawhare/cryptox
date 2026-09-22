@@ -392,7 +392,6 @@ class ExecutionEngine {
             walletBalanceAtEntry,
             effectiveBudgetAtEntry,
             io,
-            orderType,
         } = params;
 
         // 1. Decrypt Delta API credentials
@@ -400,10 +399,10 @@ class ExecutionEngine {
 
         const side = direction === 'long' ? 'buy' : 'sell';
 
-        // 2. Place entry order with bracket TP/SL
+        // 2. Place entry order as limit order with bracket TP/SL
         await this._logEvent(userId, 'live', 'ORDER_SUBMITTED', 'info',
-            `[Live] Submitting ${direction.toUpperCase()} ${quantity} ${symbol} with bracket SL: $${stopLoss}, TP: $${takeProfit}`,
-            { symbol, side, quantity, leverage, stopLoss, takeProfit, orderType }
+            `[Live] Submitting limit ${direction.toUpperCase()} ${quantity} ${symbol} @ $${entryPrice} with bracket SL: $${stopLoss}, TP: $${takeProfit}`,
+            { symbol, side, quantity, leverage, stopLoss, takeProfit, orderType: 'limit_order' }
         );
 
         let orderResp;
@@ -412,8 +411,8 @@ class ExecutionEngine {
                 symbol,
                 side,
                 size: quantity,
-                orderType,
-                price: orderType === 'limit_order' ? entryPrice : undefined,
+                orderType: 'limit_order',
+                price: entryPrice,
                 stopLoss,
                 takeProfit,
                 leverage,
@@ -439,90 +438,39 @@ class ExecutionEngine {
 
         const orderId = String(order.id);
 
-        // 3. Verify Fill: If limit order, poll up to 30s
-        let filledOrder = order;
-        if (orderType === 'limit_order' && order.state !== 'closed' && order.state !== 'filled') {
-            filledOrder = await this._pollOrderFill(client, orderId, symbol, 30_000);
-            if (!filledOrder || (filledOrder.state !== 'closed' && filledOrder.state !== 'filled')) {
-                // Not filled within 30 seconds -> Cancel order and skip
-                console.warn(`[ExecutionEngine] ⏱️ Order ${orderId} not filled within 30s. Cancelling...`);
-                try {
-                    await client.cancelOrder(orderId, symbol);
-                } catch (cancelErr) {
-                    console.error(`[ExecutionEngine] Failed to cancel timed out order ${orderId}:`, cancelErr.message);
-                }
-                await this._logEvent(userId, 'live', 'ORDER_TIMEOUT', 'warn',
-                    `Order ${orderId} not filled within 30s. Cancelled.`,
-                    { orderId, symbol }
-                );
-                return { success: false, reason: 'order_fill_timeout' };
-            }
+        // 3. If the order filled immediately (instant limit fill or market order), activate inline.
+        if (order.state === 'closed' || order.state === 'filled') {
+            return await this._activateLiveTrade({
+                userId, symbol, direction, entryPrice, stopLoss, takeProfit,
+                quantity, leverage, margin, signalScore, regime,
+                walletBalanceAtEntry, effectiveBudgetAtEntry, io,
+                orderId, filledOrder: order, reverseMode: Boolean(params.reverseMode),
+            });
         }
 
-        const actualFillPrice = filledOrder.average_fill_price
-            ? parseFloat(filledOrder.average_fill_price)
-            : entryPrice;
-        const actualFilledSize = filledOrder.size_filled
-            ? parseInt(filledOrder.size_filled)
-            : quantity;
-
-        await this._logEvent(userId, 'live', 'ORDER_FILLED', 'info',
-            `[Live] Filled ${direction.toUpperCase()} ${actualFilledSize} ${symbol} @ $${actualFillPrice}`,
-            { orderId, actualFillPrice, actualFilledSize }
-        );
-
-        // 4. Verify Bracket Protection
-        // Check if bracket TP and SL orders are active on Delta
-        const protectionValid = await this._verifyProtection(client, symbol, orderId);
-        if (!protectionValid) {
-            console.error(`[ExecutionEngine] 🚨 TP/SL protection verification failed for ${symbol}! Triggering emergency close.`);
-            await this._logEvent(userId, 'live', 'PROTECTION_FAILED', 'critical',
-                `TP/SL bracket protection not verified on Delta for order ${orderId}. Emergency closing position.`,
-                { orderId, symbol }
-            );
-
-            // Emergency close position immediately
-            try {
-                await client.closePosition(symbol, actualFilledSize, side);
-                await this._logEvent(userId, 'live', 'POSITION_CLOSED_EMERGENCY', 'critical',
-                    `Emergency closed position for ${symbol} due to missing bracket protection.`,
-                    { symbol, size: actualFilledSize }
-                );
-            } catch (closeErr) {
-                console.error(`[ExecutionEngine] 🚨 Emergency close failed on Delta:`, closeErr.message);
-                await this._logEvent(userId, 'live', 'SYSTEM_ERROR', 'critical',
-                    `Failed to emergency close unprotected position: ${closeErr.message}`,
-                    { symbol, error: closeErr.message }
-                );
-            }
-            return { success: false, reason: 'protection_failed_emergency_closed' };
-        }
-
-        await this._logEvent(userId, 'live', 'TP_PLACED', 'info',
-            `[Live] Take profit bracket active at $${takeProfit}`,
-            { symbol, takeProfit }
-        );
-        await this._logEvent(userId, 'live', 'SL_PLACED', 'info',
-            `[Live] Stop loss bracket active at $${stopLoss}`,
-            { symbol, stopLoss }
-        );
-
-        // 5. Create BotTrade audit document
+        // 4. Limit order is still open on Delta — store as pending_entry and return immediately.
+        //    EntryOrderWatcher polls every 10s, activates on fill, or cancels after 15 minutes.
+        //    Bracket TP/SL is already attached to the order on Delta — it activates automatically on fill.
+        //    We NEVER call cancelAllOrders here — only the specific entry order is managed on timeout.
+        const nowPlaced = new Date();
         const trade = await BotTrade.create({
             userId,
             mode: 'live',
             symbol,
             direction,
-            entryPrice: actualFillPrice,
+            entryPrice,           // planned limit price; updated to actual fill price on activation
             stopLoss,
             takeProfit,
-            quantity: actualFilledSize,
+            quantity,
             leverage,
             margin,
-            fees: (actualFillPrice * actualFilledSize * 0.0002), // estimated maker fee
-            entryTime: new Date(),
-            result: 'open',
+            fees: 0,
+            entryTime: nowPlaced,
+            result: 'pending_entry',
             entryOrderId: orderId,
+            pendingEntryOrderId: orderId,
+            entryOrderStatus: 'pending',
+            entryOrderPlacedAt: nowPlaced,
             signalScore,
             regime,
             walletBalanceAtEntry,
@@ -530,23 +478,82 @@ class ExecutionEngine {
             reverseMode: Boolean(params.reverseMode),
         });
 
-        await this._logEvent(userId, 'live', 'POSITION_OPENED', 'info',
-            `[Live] Position opened: ${direction.toUpperCase()} ${actualFilledSize} ${symbol} @ $${actualFillPrice} (Margin: $${margin.toFixed(2)})`,
-            { tradeId: trade._id, orderId, margin, leverage }
+        await this._logEvent(userId, 'live', 'ORDER_PENDING', 'info',
+            `[Live] Limit order ${orderId} awaiting fill: ${direction.toUpperCase()} ${quantity} ${symbol} @ $${entryPrice} (SL: $${stopLoss}, TP: $${takeProfit}). Auto-cancels in 15 min if unfilled.`,
+            { tradeId: trade._id, orderId, symbol, direction, quantity, entryPrice, stopLoss, takeProfit }
         );
 
-        // 6. Emit Socket.IO event
-        this._emit(io, userId, 'bot_trade_opened', {
-            trade: trade.toObject(),
-            mode: 'live',
-        });
+        this._emit(io, userId, 'bot_trade_pending', { trade: trade.toObject(), mode: 'live' });
+
+        console.log(`[ExecutionEngine] ⏳ [Live] Limit order ${orderId} placed — ${direction.toUpperCase()} ${quantity} ${symbol} @ $${entryPrice}. EntryOrderWatcher monitoring.`);
+        return { success: true, pending: true, trade: trade.toObject() };
+    }
+
+    /**
+     * Called when a live limit order has confirmed fill (either inline or by EntryOrderWatcher).
+     * Creates the BotTrade as 'open', logs TP/SL events, emits socket update.
+     */
+    async _activateLiveTrade(params) {
+        const {
+            userId, symbol, direction, stopLoss, takeProfit,
+            quantity, leverage, margin, signalScore, regime,
+            walletBalanceAtEntry, effectiveBudgetAtEntry, io,
+            orderId, filledOrder, reverseMode,
+            existingTradeId = null,  // if we're updating a pending_entry record
+        } = params;
+
+        const actualFillPrice = filledOrder.average_fill_price
+            ? parseFloat(filledOrder.average_fill_price)
+            : params.entryPrice;
+        const actualFilledSize = filledOrder.size_filled
+            ? parseInt(filledOrder.size_filled)
+            : quantity;
+
+        let trade;
+        if (existingTradeId) {
+            // Update existing pending_entry → open
+            trade = await BotTrade.findById(existingTradeId);
+            if (trade) {
+                trade.entryPrice     = actualFillPrice;
+                trade.quantity       = actualFilledSize;
+                trade.fees           = actualFillPrice * actualFilledSize * 0.0002;
+                trade.result         = 'open';
+                trade.entryOrderStatus = 'filled';
+                await trade.save();
+            }
+        } else {
+            // Create fresh BotTrade (instant fill path)
+            trade = await BotTrade.create({
+                userId, mode: 'live', symbol, direction,
+                entryPrice: actualFillPrice, stopLoss, takeProfit,
+                quantity: actualFilledSize, leverage, margin,
+                fees: actualFillPrice * actualFilledSize * 0.0002,
+                entryTime: new Date(), result: 'open',
+                entryOrderId: orderId, entryOrderStatus: 'filled',
+                signalScore, regime, walletBalanceAtEntry, effectiveBudgetAtEntry,
+                reverseMode: Boolean(reverseMode),
+            });
+        }
+
+        await this._logEvent(userId, 'live', 'ORDER_FILLED', 'info',
+            `[Live] Filled ${direction.toUpperCase()} ${actualFilledSize} ${symbol} @ $${actualFillPrice}`,
+            { orderId, actualFillPrice, actualFilledSize }
+        );
+        await this._logEvent(userId, 'live', 'TP_PLACED', 'info',
+            `[Live] Take profit bracket active at $${takeProfit}`, { symbol, takeProfit }
+        );
+        await this._logEvent(userId, 'live', 'SL_PLACED', 'info',
+            `[Live] Stop loss bracket active at $${stopLoss}`, { symbol, stopLoss }
+        );
+        await this._logEvent(userId, 'live', 'POSITION_OPENED', 'info',
+            `[Live] Position opened: ${direction.toUpperCase()} ${actualFilledSize} ${symbol} @ $${actualFillPrice} (Margin: $${margin.toFixed(2)})`,
+            { tradeId: trade?._id, orderId, margin, leverage }
+        );
+
+        this._emit(io, userId, 'bot_trade_opened', { trade: trade?.toObject(), mode: 'live' });
 
         console.log(`[ExecutionEngine] 💰 [Live] Opened ${direction.toUpperCase()} ${actualFilledSize} ${symbol} @ $${actualFillPrice}`);
-
-        return {
-            success: true,
-            trade: trade.toObject(),
-        };
+        return { success: true, trade: trade?.toObject() };
     }
 
     // ─── Emergency Close ───────────────────────────────────────────────────────

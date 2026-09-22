@@ -64,13 +64,13 @@ const botTradeSchema = new mongoose.Schema(
         // ── Result ─────────────────────────────────────────────────────────
         result: {
             type: String,
-            enum: ['win', 'loss', 'breakeven', 'open', 'cancelled'],
+            enum: ['win', 'loss', 'breakeven', 'open', 'cancelled', 'pending_entry'],
             default: 'open',
         },
 
         exitReason: {
             type: String,
-            enum: ['take_profit', 'stop_loss', 'manual', 'manual_close', 'emergency', 'timeout', null],
+            enum: ['take_profit', 'stop_loss', 'manual', 'manual_close', 'emergency', 'timeout', 'entry_timeout', null],
             default: null,
         },
 
@@ -79,6 +79,16 @@ const botTradeSchema = new mongoose.Schema(
         entryOrderId: { type: String, default: null },
         tpOrderId:    { type: String, default: null },
         slOrderId:    { type: String, default: null },
+
+        // ── Pending Limit Entry Tracking ────────────────────────────────────
+        // Used when the bot places a limit order and waits for fill
+        pendingEntryOrderId: { type: String, default: null },
+        entryOrderStatus: {
+            type: String,
+            enum: ['pending', 'filled', 'cancelled', 'timeout', null],
+            default: null,
+        },
+        entryOrderPlacedAt: { type: Date, default: null },
 
         // ── Signal context ──────────────────────────────────────────────────
         signalScore: { type: Number, default: null },

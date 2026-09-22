@@ -33,6 +33,7 @@ const { filterAffordable } = require('./AffordabilityFilter');
 const { calcRisk, checkDailyLimits } = require('./RiskEngine');
 const executionEngine = require('./ExecutionEngine');
 const positionMonitor = require('./PositionMonitor');
+const entryOrderWatcher = require('./EntryOrderWatcher');
 const aiRegimeAnalyzer = require('./AiRegimeAnalyzer');
 
 class TradingBot {
@@ -86,6 +87,9 @@ class TradingBot {
         // Start position monitor if not already running
         positionMonitor.start(this.io, this.wsManager);
 
+        // Start entry order watcher (monitors pending live limit orders)
+        entryOrderWatcher.start(this.io);
+
         // Start AI regime analyzer
         aiRegimeAnalyzer.start(this.wsManager);
 
@@ -117,6 +121,7 @@ class TradingBot {
         }
         this._nextScanAt = null;
         aiRegimeAnalyzer.stop();
+        entryOrderWatcher.stop();
         console.log(`[TradingBot] ⏹️ ${this.mode.toUpperCase()} Bot stopped`);
         this._emitStatus();
     }
@@ -297,7 +302,13 @@ class TradingBot {
 
         // ── 2. Safety Gates ────────────────────────────────────────────────────
         // Check for existing open trades (max simultaneous open positions limit)
-        const openTrades = await BotTrade.find({ userId, mode: this.mode, result: 'open' });
+        // Include pending_entry (limit orders awaiting fill) in the count so we don't
+        // double-enter the same symbol while its entry order is sitting on the exchange.
+        const openTrades = await BotTrade.find({
+            userId,
+            mode: this.mode,
+            result: { $in: ['open', 'pending_entry'] },
+        });
         const maxAllowed = config.maxOpenPositions || 5;
         if (openTrades.length >= maxAllowed) {
             console.log(`[TradingBot] User has reached max open positions limit (${openTrades.length}/${maxAllowed}). Skipping entry.`);
@@ -402,7 +413,7 @@ class TradingBot {
             return;
         }
 
-        // Exclude symbols that already have an open position so we don't duplicate trades in the same coin
+        // Exclude symbols that already have an open or pending position
         const openSymbols = new Set(openTrades.map(t => t.symbol));
         const unheldAffordable = affordableSymbols.filter(s => !openSymbols.has(s));
 
