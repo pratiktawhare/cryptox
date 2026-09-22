@@ -26,11 +26,12 @@ const tradeHistorySchema = new mongoose.Schema({
     takeProfit: { type: Number, default: null },
 
     // Execution
-    status:     { type: String, enum: ['pending', 'open', 'filled', 'cancelled', 'rejected', 'failed'], default: 'pending' },
+    status:     { type: String, enum: ['pending', 'open', 'filled', 'cancelled', 'rejected', 'failed', 'pending_limit', 'entry_timeout'], default: 'pending' },
     filledPrice:   { type: Number, default: null },
     filledAt:      { type: Date, default: null },
     filledSize:    { type: Number, default: null },
     commission:    { type: Number, default: null },  // USDT
+    entryOrderPlacedAt: { type: Date, default: null }, // for 15-min timeout tracking
 
     // P&L (filled in when closed)
     closedAt:      { type: Date, default: null },

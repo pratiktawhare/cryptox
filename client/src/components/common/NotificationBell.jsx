@@ -39,15 +39,16 @@ export default function NotificationBell() {
     const [unreadCount,   setUnreadCount]   = useState(0);
     const [loading,       setLoading]       = useState(false);
     const [soundEnabled,  setSoundEnabled]  = useState(true);
+    const [expandedId,    setExpandedId]    = useState(null);
 
     const dropdownRef = useRef(null);
     const bellRef     = useRef(null);
 
     // ── Fetch list ────────────────────────────────────────────────────────────
 
-    const fetchNotifications = useCallback(async () => {
+    const fetchNotifications = useCallback(async (isInitial = false) => {
         if (!user) return;
-        setLoading(true);
+        if (isInitial && notifications.length === 0) setLoading(true);
         try {
             const { data } = await api.get('/notifications');
             if (data.success) {
@@ -56,12 +57,12 @@ export default function NotificationBell() {
             }
         } catch { /* silent */ }
         finally { setLoading(false); }
-    }, [user]);
+    }, [user, notifications.length]);
 
-    useEffect(() => { fetchNotifications(); }, [fetchNotifications]);
+    useEffect(() => { fetchNotifications(true); }, [fetchNotifications]);
 
-    // Refresh when dropdown opens
-    useEffect(() => { if (open) fetchNotifications(); }, [open, fetchNotifications]);
+    // Refresh when dropdown opens without wiping current list
+    useEffect(() => { if (open) fetchNotifications(false); }, [open, fetchNotifications]);
 
     // ── Socket.IO real-time push ──────────────────────────────────────────────
 
@@ -79,7 +80,13 @@ export default function NotificationBell() {
 
             // Browser native notification (if permission granted)
             if (Notification.permission === 'granted') {
-                new Notification(notif.title, { body: notif.message, icon: '/favicon.ico' });
+                try {
+                    const bNotif = new Notification(notif.title, { body: notif.message, icon: '/favicon.ico' });
+                    bNotif.onclick = () => {
+                        window.focus();
+                        setOpen(true);
+                    };
+                } catch { /* ignore */ }
             }
         };
 
@@ -129,11 +136,28 @@ export default function NotificationBell() {
         } catch { /* silent */ }
     }
 
+    async function clearAll() {
+        try {
+            await api.delete('/notifications/clear-all');
+            setNotifications([]);
+            setUnreadCount(0);
+        } catch {
+            setNotifications([]);
+            setUnreadCount(0);
+        }
+    }
+
     function requestBrowserPermission() {
         if ('Notification' in window && Notification.permission === 'default') {
             Notification.requestPermission();
         }
     }
+
+    const handleItemClick = (n) => {
+        const nid = n.id || n._id;
+        if (!n.isRead) markRead(nid);
+        setExpandedId(prev => prev === nid ? null : nid);
+    };
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -142,7 +166,7 @@ export default function NotificationBell() {
             {/* Bell button */}
             <button
                 ref={bellRef}
-                onClick={() => { setOpen(o => !o); requestBrowserPermission(); }}
+                onClick={() => setOpen(o => !o)}
                 title="Notifications"
                 style={{
                     position: 'relative',
@@ -258,7 +282,7 @@ export default function NotificationBell() {
 
                     {/* List */}
                     <div style={{ maxHeight: '420px', overflowY: 'auto' }}>
-                        {loading ? (
+                        {loading && notifications.length === 0 ? (
                             <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>
                                 Loading…
                             </div>
@@ -270,17 +294,18 @@ export default function NotificationBell() {
                         ) : (
                             notifications.map(n => {
                                 const nid = n.id || n._id;
+                                const isExpanded = expandedId === nid;
                                 return (
                                     <div
                                         key={nid}
-                                        onClick={() => !n.isRead && markRead(nid)}
+                                        onClick={() => handleItemClick(n)}
                                         style={{
                                             padding: '12px 16px',
                                             display: 'flex',
                                             gap: '12px',
                                             borderBottom: '1px solid rgba(255,255,255,0.04)',
-                                            cursor: n.isRead ? 'default' : 'pointer',
-                                            background: n.isRead ? 'transparent' : 'rgba(167,139,250,0.04)',
+                                            cursor: 'pointer',
+                                            background: n.isRead ? 'transparent' : 'rgba(167,139,250,0.06)',
                                             transition: 'background 0.2s',
                                         }}
                                     >
@@ -307,7 +332,7 @@ export default function NotificationBell() {
                                                 fontWeight: n.isRead ? 500 : 700,
                                                 color: n.isRead ? '#94a3b8' : '#fff',
                                                 marginBottom: '2px',
-                                                whiteSpace: 'nowrap',
+                                                whiteSpace: isExpanded ? 'normal' : 'nowrap',
                                                 overflow: 'hidden',
                                                 textOverflow: 'ellipsis',
                                             }}>
@@ -315,15 +340,34 @@ export default function NotificationBell() {
                                             </div>
                                             <div style={{
                                                 fontSize: '12px',
-                                                color: '#64748b',
+                                                color: isExpanded ? '#cbd5e1' : '#64748b',
                                                 lineHeight: 1.4,
-                                                display: '-webkit-box',
-                                                WebkitLineClamp: 2,
+                                                display: isExpanded ? 'block' : '-webkit-box',
+                                                WebkitLineClamp: isExpanded ? 'unset' : 2,
                                                 WebkitBoxOrient: 'vertical',
                                                 overflow: 'hidden',
+                                                wordBreak: 'break-word',
                                             }}>
                                                 {n.message}
                                             </div>
+                                            {isExpanded && n.signalId && (
+                                                <a
+                                                    href="/signals"
+                                                    onClick={(e) => { e.stopPropagation(); setOpen(false); }}
+                                                    style={{
+                                                        display: 'inline-flex',
+                                                        alignItems: 'center',
+                                                        gap: '4px',
+                                                        marginTop: '6px',
+                                                        fontSize: '11px',
+                                                        color: '#a78bfa',
+                                                        fontWeight: 600,
+                                                        textDecoration: 'none',
+                                                    }}
+                                                >
+                                                    View in Signals →
+                                                </a>
+                                            )}
                                             <div style={{ fontSize: '11px', color: '#475569', marginTop: '4px' }}>
                                                 {timeAgo(n.createdAt)}
                                             </div>
@@ -367,24 +411,39 @@ export default function NotificationBell() {
                     {notifications.length > 0 && (
                         <div style={{
                             padding: '10px 16px',
-                            borderTop: '1px solid rgba(167,139,250,0.1)',
-                            textAlign: 'center',
+                            borderTop: '1px solid rgba(167,139,250,0.12)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
                         }}>
                             <button
-                                onClick={() => {
-                                    setNotifications([]);
-                                    setUnreadCount(0);
-                                    setOpen(false);
-                                }}
+                                onClick={markAllRead}
                                 style={{
                                     background: 'none',
                                     border: 'none',
-                                    color: '#475569',
+                                    color: '#a78bfa',
                                     fontSize: '12px',
+                                    fontWeight: 500,
                                     cursor: 'pointer',
                                 }}
                             >
-                                Clear all (local)
+                                Mark all read
+                            </button>
+                            <button
+                                onClick={clearAll}
+                                style={{
+                                    background: 'rgba(239,68,68,0.1)',
+                                    border: '1px solid rgba(239,68,68,0.25)',
+                                    borderRadius: '6px',
+                                    color: '#f87171',
+                                    fontSize: '12px',
+                                    fontWeight: 600,
+                                    padding: '4px 10px',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s',
+                                }}
+                            >
+                                Clear all
                             </button>
                         </div>
                     )}

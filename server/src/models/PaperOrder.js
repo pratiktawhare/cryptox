@@ -53,7 +53,9 @@ const paperOrderSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'TradeSignal',
         default: null
-    }
+    },
+    source: { type: String, default: 'manual' },
+    entryOrderPlacedAt: { type: Date, default: null }, // for 15-min timeout
 }, {
     timestamps: true
 });

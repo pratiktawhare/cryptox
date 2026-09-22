@@ -13,6 +13,7 @@ const productCatalog           = require('./services/ProductCatalog');
 const notificationService      = require('./services/NotificationService');
 
 // ─── Routes ──────────────────────────────────────────────
+// Reload routes
 const setupRoutes         = require('./routes/setup');
 const authRoutes          = require('./routes/auth');
 const profileRoutes       = require('./routes/profile');

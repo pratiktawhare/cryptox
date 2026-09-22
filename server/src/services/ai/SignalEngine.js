@@ -27,15 +27,17 @@ const UserPreferences = require('../../models/UserPreferences');
 const PaperWallet = require('../../models/PaperWallet');
 const selfLearning = require('./SelfLearning');
 const notificationService = require('../NotificationService');
+const scalpRiskGuard = require('./ScalpRiskGuard');
+const productCatalog = require('../ProductCatalog');
 
-// Configuration
+// Configuration — Scalp Mode (90%+ Target Win Rate)
 const CYCLE_INTERVAL_MS   = 5 * 60 * 1000;  // 5 minutes per cycle
 const COINS_PER_CYCLE     = 20;              // Coins scanned per cycle
 const GEMINI_CALL_DELAY   = 4000;            // 4s between Gemini calls → max ~15 RPM
-const MIN_BIAS_SCORE      = 0.20;            // Minimum bias score to call AI (balanced — filters noise but not good setups)
+const MIN_BIAS_SCORE      = 0.35;            // Minimum bias score to call AI (strong directional bias only)
 const MIN_SIGNAL_GAP_MS   = 15 * 60 * 1000; // 15 min gap between signals per coin
-const MIN_CONFIDENCE      = 65;              // Minimum confidence to emit signal (balanced)
-const MIN_RR              = 1.5;             // Minimum R/R ratio gate before saving signal
+const MIN_CONFIDENCE      = 72;              // Minimum confidence to emit signal (high conviction setups)
+const MIN_RR              = 0.35;            // Minimum R/R ratio gate before saving signal (scalp math: 0.3-0.6)
 
 class SignalEngine {
     constructor() {
@@ -169,20 +171,26 @@ class SignalEngine {
             if (!isLiquid) return;
 
             // Step 2a: Affordability check — can the user afford ≥1 contract?
+            const catalog       = this.catalog || productCatalog;
+            const spec          = catalog?.getBySymbol(symbol);
+            const contractVal   = parseFloat(spec?.contract_value || 1);
             const currentPrice  = primary.price;
-            const leverage      = userPrefs.maxLeverage || 10;
+            const leverage      = Math.min(spec?.max_leverage || 10, userPrefs.maxLeverage || 10);
             const tradeBudget   = walletContext.tradeBudget ?? 10000;
-            const marginFor1    = currentPrice / leverage; // margin needed for 1 contract
+            const marginFor1    = (currentPrice * contractVal) / leverage; // margin needed for 1 contract
             if (marginFor1 > tradeBudget) {
                 // Too expensive — quietly skip (don't even waste bias computation)
                 return;
             }
 
-            // Step 2b: Pre-filter — only call Gemini for strong-bias setups
+            // Step 2b: Pre-filter — Regime Guard (directional bias + ADX momentum check)
+            const regime = this._checkMarketRegime(mtf);
+            if (!regime.pass) {
+                return;
+            }
             const biasScore = mtf.mtfBias?.score ?? 0;
-            if (Math.abs(biasScore) < MIN_BIAS_SCORE) return;
 
-            console.log(`[SignalEngine] 🔍 ${symbol} @ $${currentPrice} | margin/contract: $${marginFor1.toFixed(2)} | budget: $${tradeBudget} | bias: ${biasScore.toFixed(2)}`);
+            console.log(`[SignalEngine] 🔍 ${symbol} @ $${currentPrice} | margin/contract: $${marginFor1.toFixed(4)} | budget: $${tradeBudget} | bias: ${biasScore.toFixed(2)}`);
 
 
             // Step 3: Self-learning context (non-blocking)
@@ -207,24 +215,32 @@ class SignalEngine {
                 console.log(`[SignalEngine] ⬜ ${symbol} → NO_TRADE (conf: ${signal?.confidence ?? 0})`);
                 return true; // Gemini was called
             }
-            if (signal.confidence < MIN_CONFIDENCE) {
-                console.log(`[SignalEngine] ⬜ ${symbol} → Low confidence: ${signal.confidence}% < ${MIN_CONFIDENCE}%`);
+            const effectiveMinConfidence = userPrefs.minConfidence || MIN_CONFIDENCE;
+            if (signal.confidence < effectiveMinConfidence) {
+                console.log(`[SignalEngine] ⬜ ${symbol} → Low confidence: ${signal.confidence}% < ${effectiveMinConfidence}%`);
                 return true; // Gemini was called
+            }
+
+            // Step 5b: ScalpRiskGuard post-processor (enforces micro TP and wide SL for 90%+ win rate)
+            const guardResult = scalpRiskGuard.process(signal, mtf);
+            if (!guardResult.valid) {
+                console.log(`[SignalEngine] ❌ ${symbol} — ScalpRiskGuard rejected: ${guardResult.error || 'invalid setup'}`);
+                return true;
             }
 
             // Step 6: Auto-calculate recommended quantity from budget if Gemini didn't set one
             const entry = signal.entry || currentPrice;
-            // Use Gemini's suggested leverage if within user's max, else fall back to Step 2a value
+            // Use Gemini's suggested leverage if within allowed max, else fall back to Step 2a value
             const sigLeverage = Math.min(signal.leverage || leverage, leverage);
             if (!signal.quantity && entry) {
-                const marginPerContract = entry / sigLeverage;
+                const marginPerContract = (entry * contractVal) / sigLeverage;
                 signal.quantity = Math.max(1, Math.floor(tradeBudget / marginPerContract));
             }
             // Cap quantity so margin never exceeds tradeBudget
             if (signal.quantity && entry) {
-                const marginNeeded = (signal.quantity * entry) / sigLeverage;
+                const marginNeeded = (signal.quantity * entry * contractVal) / sigLeverage;
                 if (marginNeeded > tradeBudget * 1.1) {
-                    signal.quantity = Math.max(1, Math.floor((tradeBudget * sigLeverage) / entry));
+                    signal.quantity = Math.max(1, Math.floor((tradeBudget * sigLeverage) / (entry * contractVal)));
                 }
             }
             signal.leverage = sigLeverage;
@@ -246,7 +262,39 @@ class SignalEngine {
     }
 
 
-    // ─── R/R Validation Gate ───────────────────────────────────────────────────
+    // ─── Market Regime & R/R Gates ───────────────────────────────────────────
+
+    /**
+     * Regime Guard: Verifies market conditions support high-probability scalping.
+     * Rejects ranging / choppy markets or symbols lacking sufficient momentum/bias.
+     * @param {Object} mtf
+     * @returns {{ pass: boolean, reason?: string }}
+     */
+    _checkMarketRegime(mtf) {
+        if (!mtf) return { pass: false, reason: 'Missing MTF analysis' };
+
+        const tf15 = mtf['15m'] || mtf['5m'];
+        const tf4h = mtf['4h'];
+        const biasScore = Math.abs(mtf.mtfBias?.score ?? 0);
+
+        // 1. Bias score gate (must have clear directional bias)
+        if (biasScore < MIN_BIAS_SCORE) {
+            return { pass: false, reason: `Bias score (${biasScore.toFixed(2)}) < ${MIN_BIAS_SCORE}` };
+        }
+
+        // 2. 4H Trend alignment (if 4H available, avoid conflicting / dead macro trends)
+        if (tf4h && tf4h.bias && Math.abs(tf4h.bias.score ?? 0) < 0.20 && biasScore < 0.45) {
+            return { pass: false, reason: `4H trend ambiguous (score ${tf4h.bias.score?.toFixed(2)})` };
+        }
+
+        // 3. ADX Momentum gate (ADX < 20 indicates sideways chop / ranging)
+        const adx = tf15?.indicators?.adx?.adx;
+        if (adx !== undefined && adx !== null && adx < 20) {
+            return { pass: false, reason: `ADX too low (${adx} < 20) — market in low-momentum chop` };
+        }
+
+        return { pass: true };
+    }
 
     /**
      * Validates that the signal's R/R meets the minimum threshold.
@@ -277,8 +325,11 @@ class SignalEngine {
     async _saveSignal(signal, mtf, primary, walletContext = {}) {
         const ind = primary.indicators;
         const smc = primary.smc;
+        const catalog = this.catalog || productCatalog;
+        const spec = catalog?.getBySymbol(signal.symbol || mtf.symbol);
+        const contractVal = parseFloat(spec?.contract_value || 1);
         const estimatedMargin = signal.entry && signal.quantity
-            ? ((signal.quantity * signal.entry) / (signal.leverage || 10)).toFixed(2)
+            ? ((signal.quantity * signal.entry * contractVal) / (signal.leverage || 10)).toFixed(2)
             : null;
 
         const doc = {
@@ -362,33 +413,66 @@ class SignalEngine {
      * Manually trigger analysis for a specific symbol (on-demand from frontend).
      */
     async analyzeNow(symbol, userPrefs, walletContext = {}) {
-        const productCatalog = this.catalog;
+        const catalog = this.catalog || productCatalog;
         const wsManager = this.wsManager;
 
         if (symbol === 'RANDOM' || symbol === 'CHEAP') {
-            if (!productCatalog?.isReady) {
+            if (!catalog?.isReady) {
                 throw new Error('Product catalog is not ready');
             }
-            const allSymbols = productCatalog.getSymbols();
-            const cheapCoins = allSymbols.filter(s => {
-                if (s === 'BTCUSD' || s === 'ETHUSD') return false;
+            const allSymbols = catalog.getSymbols();
+            const tradeBudget = walletContext.tradeBudget;
+            const userMaxLev = userPrefs.maxLeverage || 10;
+
+            // Map each symbol to its 1-contract margin cost
+            const symbolMarginMap = new Map();
+            for (const s of allSymbols) {
+                const spec = catalog.getBySymbol(s);
+                const contractVal = parseFloat(spec?.contract_value || 1);
+                const coinLev = Math.min(spec?.max_leverage || userMaxLev, userMaxLev);
                 const price = wsManager ? wsManager.getPrice(s) : null;
-                if (price !== null) return price < 200;
+                if (price && price > 0) {
+                    const marginFor1 = (price * contractVal) / coinLev;
+                    symbolMarginMap.set(s, marginFor1);
+                }
+            }
+
+            // Filter for affordable coins: 1 contract must fit within tradeBudget
+            let affordableCoins = allSymbols.filter(s => {
+                const margin = symbolMarginMap.get(s);
+                if (margin !== undefined && tradeBudget) {
+                    return margin <= tradeBudget;
+                }
                 return true;
             });
 
-            if (cheapCoins.length === 0) {
-                throw new Error('No cheap coins found in catalog');
+            if (affordableCoins.length === 0) {
+                // If strictly no coin fits, fallback to lowest margin coins
+                affordableCoins = [...allSymbols].sort((a, b) => {
+                    const ma = symbolMarginMap.get(a) ?? 9999;
+                    const mb = symbolMarginMap.get(b) ?? 9999;
+                    return ma - mb;
+                });
             }
 
             const requestedAction = walletContext.requestedAction || 'all';
             const requestedConfRange = walletContext.requestedConfRange || 'all';
 
-            console.log(`[On-Demand] Starting cheap coin search. Filter: Action = ${requestedAction}, Confidence Range = ${requestedConfRange}`);
+            console.log(`[On-Demand] Starting coin search (budget: $${tradeBudget ? tradeBudget.toFixed(2) : 'unlimited'}). Filter: Action = ${requestedAction}, Confidence Range = ${requestedConfRange}`);
 
-            // Shuffle cheapCoins to keep the scan random/fresh
-            const shuffledCheap = [...cheapCoins].sort(() => Math.random() - 0.5);
-            
+            let prioritizedCoins;
+            if (tradeBudget && tradeBudget <= 50) {
+                // Low budget: sort by lowest margin first so user's trade executes reliably!
+                prioritizedCoins = [...affordableCoins].sort((a, b) => {
+                    const ma = symbolMarginMap.get(a) ?? 9999;
+                    const mb = symbolMarginMap.get(b) ?? 9999;
+                    return ma - mb;
+                });
+                console.log(`[On-Demand] 💡 Low budget mode active ($${tradeBudget.toFixed(2)}): prioritized ${prioritizedCoins.length} affordable coins. Cheapest: ${prioritizedCoins.slice(0, 5).map(s => `${s} ($${symbolMarginMap.get(s)?.toFixed(4)})`).join(', ')}`);
+            } else {
+                prioritizedCoins = [...affordableCoins].sort(() => Math.random() - 0.5);
+            }
+
             let fallbackSignal = null;
             let llmCallsCount = 0;
             const maxLlmCalls = 10;
@@ -396,13 +480,13 @@ class SignalEngine {
 
             let firstMtf = null; // To use as a fallback mtf context if no trade is found
 
-            for (let startIdx = 0; startIdx < shuffledCheap.length; startIdx += batchSize) {
+            for (let startIdx = 0; startIdx < prioritizedCoins.length; startIdx += batchSize) {
                 if (llmCallsCount >= maxLlmCalls) {
                     console.log(`[On-Demand] Reached max LLM calls limit of ${maxLlmCalls}. Stopping search.`);
                     break;
                 }
                 
-                const batchSymbols = shuffledCheap.slice(startIdx, startIdx + batchSize);
+                const batchSymbols = prioritizedCoins.slice(startIdx, startIdx + batchSize);
                 console.log(`[On-Demand] Fetching indicators for batch: ${batchSymbols.join(', ')}`);
                 
                 const batchResults = await Promise.allSettled(
@@ -416,15 +500,26 @@ class SignalEngine {
                         const mtf = res.value;
                         const primary = mtf['5m'] || mtf['15m'];
                         if (primary && !primary.error) {
+                            const sym = batchSymbols[j];
                             // Check liquidity/volume (skip if coin is staying still / illiquid)
                             const isLiquid = primary.volumeContext?.isLiquid ?? true;
                             if (!isLiquid) {
-                                console.log(`[On-Demand] Skipping illiquid/dead coin: ${batchSymbols[j]} (Avg Vol USDT: $${primary.volumeContext?.avgVolumeUsdt}, Zero Vol Pct: ${(primary.volumeContext?.zeroVolumePct * 100).toFixed(1)}%)`);
+                                console.log(`[On-Demand] Skipping illiquid/dead coin: ${sym}`);
+                                continue;
+                            }
+
+                            // Affordability check with real primary.price & contract_value
+                            const spec = catalog.getBySymbol(sym);
+                            const contractVal = parseFloat(spec?.contract_value || 1);
+                            const coinLev = Math.min(spec?.max_leverage || userMaxLev, userMaxLev);
+                            const marginFor1 = (primary.price * contractVal) / coinLev;
+                            if (tradeBudget && marginFor1 > tradeBudget) {
+                                console.log(`[On-Demand] Skipping unaffordable coin: ${sym} (margin: $${marginFor1.toFixed(4)} > budget: $${tradeBudget.toFixed(2)})`);
                                 continue;
                             }
 
                             const score = mtf.mtfBias?.score ?? 0;
-                            batchCandidates.push({ symbol: batchSymbols[j], score, mtf });
+                            batchCandidates.push({ symbol: sym, score, mtf, marginFor1, contractVal, coinLev });
                             if (!firstMtf) {
                                 firstMtf = mtf;
                             }
@@ -452,7 +547,7 @@ class SignalEngine {
                 for (const candidate of filteredCandidates) {
                     if (llmCallsCount >= maxLlmCalls) break;
                     
-                    console.log(`[On-Demand] LLM Call #${llmCallsCount+1}/${maxLlmCalls} for: ${candidate.symbol} (Bias Score: ${candidate.score.toFixed(2)})`);
+                    console.log(`[On-Demand] LLM Call #${llmCallsCount+1}/${maxLlmCalls} for: ${candidate.symbol} (Bias Score: ${candidate.score.toFixed(2)}, Margin/contract: $${candidate.marginFor1.toFixed(4)})`);
                     llmCallsCount++;
                     
                     try {
@@ -470,6 +565,7 @@ class SignalEngine {
                         const signal = await GeminiClient.call(userPrefs, SYSTEM_PROMPT, userPrompt);
 
                         if (signal && signal.action !== 'NO_TRADE') {
+                            const effectiveMinConf = userPrefs.minConfidence || 65;
                             const matchesAction = requestedAction === 'all' || signal.action === requestedAction;
                             
                             let matchesConf = true;
@@ -480,27 +576,42 @@ class SignalEngine {
                                     const [low, high] = requestedConfRange.split('-').map(Number);
                                     matchesConf = signal.confidence >= low && signal.confidence <= high;
                                 }
+                            } else {
+                                matchesConf = signal.confidence >= effectiveMinConf;
                             }
 
                             if (matchesAction && matchesConf) {
+                                // ScalpRiskGuard: deterministic target & SL post-processing
+                                const guardResult = scalpRiskGuard.process(signal, candidate.mtf);
+                                if (!guardResult.valid) {
+                                    console.log(`[On-Demand] ScalpRiskGuard rejected ${candidate.symbol}: ${guardResult.error || 'invalid'}`);
+                                    continue;
+                                }
+
+                                if (!this._validateSignalRR(signal, candidate.symbol)) {
+                                    console.log(`[On-Demand] Candidate ${candidate.symbol} R/R too low (< ${MIN_RR})`);
+                                    continue;
+                                }
+
                                 const entry = signal.entry || candidate.mtf['5m']?.price;
-                                const sigLeverage = Math.min(signal.leverage || userPrefs.maxLeverage || 10, userPrefs.maxLeverage || 10);
-                                const tradeBudget = walletContext.tradeBudget ?? 10000;
+                                const sigLeverage = Math.min(signal.leverage || candidate.coinLev, candidate.coinLev);
+                                const contractVal = candidate.contractVal || 1;
+                                const budget = walletContext.tradeBudget ?? 10000;
                                 
                                 if (!signal.quantity && entry) {
-                                    const marginPerContract = entry / sigLeverage;
-                                    signal.quantity = Math.max(1, Math.floor(tradeBudget / marginPerContract));
+                                    const marginPerContract = (entry * contractVal) / sigLeverage;
+                                    signal.quantity = Math.max(1, Math.floor(budget / marginPerContract));
                                 }
                                 if (signal.quantity && entry) {
-                                    const marginNeeded = (signal.quantity * entry) / sigLeverage;
-                                    if (marginNeeded > tradeBudget * 1.1) {
-                                        signal.quantity = Math.max(1, Math.floor((tradeBudget * sigLeverage) / entry));
+                                    const marginNeeded = (signal.quantity * entry * contractVal) / sigLeverage;
+                                    if (marginNeeded > budget * 1.1) {
+                                        signal.quantity = Math.max(1, Math.floor((budget * sigLeverage) / (entry * contractVal)));
                                     }
                                 }
                                 signal.leverage = sigLeverage;
 
                                 const saved = await this._saveSignal(signal, candidate.mtf, candidate.mtf['5m'] || candidate.mtf['15m'], walletContext);
-                                console.log(`[On-Demand] Perfect match found: ${candidate.symbol} (Action: ${signal.action}, Confidence: ${signal.confidence}%)`);
+                                console.log(`[On-Demand] Perfect match found: ${candidate.symbol} (Action: ${signal.action}, Confidence: ${signal.confidence}%, Qty: ${signal.quantity})`);
                                 this._lastSignalTime.set(candidate.symbol, Date.now());
                                 return { signal, saved, mtf: candidate.mtf, avgVolumeUsdt: candidate.mtf['5m']?.volumeContext?.avgVolumeUsdt || null };
                             } else {
@@ -540,20 +651,36 @@ class SignalEngine {
         const MAX_RETRIES = 4;
         const trySymbols  = [symbol];
 
-        // Pick alternative coins from catalog in similar price range
-        if (this.catalog?.isReady) {
-            const allSyms = this.catalog.getSymbols().filter(s => s !== symbol);
-            const refPrice = this.wsManager?.getPrice?.(symbol);
-            let pool = allSyms;
-            if (refPrice) {
-                const sameTier = allSyms.filter(s => {
-                    const p = this.wsManager?.getPrice?.(s);
-                    return p && p >= refPrice / 100 && p <= refPrice * 100;
+        // Pick alternative coins from catalog affordable within tradeBudget
+        const catalogRef = this.catalog || productCatalog;
+        if (catalogRef?.isReady) {
+            const allSyms = catalogRef.getSymbols().filter(s => s !== symbol);
+            const tradeBudget = walletContext.tradeBudget;
+            
+            let pool = allSyms.filter(s => {
+                const spec = catalogRef.getBySymbol(s);
+                const cv = parseFloat(spec?.contract_value || 1);
+                const lev = Math.min(spec?.max_leverage || 10, userPrefs.maxLeverage || 10);
+                const p = this.wsManager?.getPrice?.(s);
+                if (p && tradeBudget) {
+                    return ((p * cv) / lev) <= tradeBudget;
+                }
+                return true;
+            });
+
+            if (tradeBudget && tradeBudget <= 50) {
+                // Low budget: sort by lowest margin first
+                pool.sort((a, b) => {
+                    const pa = this.wsManager?.getPrice?.(a) || 1;
+                    const pb = this.wsManager?.getPrice?.(b) || 1;
+                    const cva = parseFloat(catalogRef.getBySymbol(a)?.contract_value || 1);
+                    const cvb = parseFloat(catalogRef.getBySymbol(b)?.contract_value || 1);
+                    return (pa * cva) - (pb * cvb);
                 });
-                if (sameTier.length >= MAX_RETRIES) pool = sameTier;
+            } else {
+                pool.sort(() => Math.random() - 0.5);
             }
-            const shuffled = [...pool].sort(() => Math.random() - 0.5);
-            trySymbols.push(...shuffled.slice(0, MAX_RETRIES));
+            trySymbols.push(...pool.slice(0, MAX_RETRIES));
         }
 
         let lastNoTrade = null;
@@ -590,30 +717,43 @@ class SignalEngine {
                 const userPrompt = buildUserPrompt(mtf, prefsWithBudget, learningCtx);
                 const signal = await GeminiClient.call(userPrefs, SYSTEM_PROMPT, userPrompt);
 
-                if (!signal || signal.action === 'NO_TRADE' || signal.confidence < MIN_CONFIDENCE) {
+                const effectiveMinConf = userPrefs.minConfidence || MIN_CONFIDENCE;
+                if (!signal || signal.action === 'NO_TRADE' || signal.confidence < effectiveMinConf) {
                     const confidence = signal?.confidence || 0;
                     const reasoning  = signal?.reasoning
-                        || (signal && signal.confidence < MIN_CONFIDENCE
-                            ? `Confidence (${signal.confidence}%) below threshold of ${MIN_CONFIDENCE}%.`
+                        || (signal && signal.confidence < effectiveMinConf
+                            ? `Confidence (${signal.confidence}%) below threshold of ${effectiveMinConf}%.`
                             : 'No trade setup');
                     lastNoTrade = { action: 'NO_TRADE', confidence, reasoning, mtf };
                     console.log(`[On-Demand] ⬜ ${trySym} → NO_TRADE (conf: ${confidence}%)${isRetry ? ' [retry]' : ''}`);
                     continue;
                 }
 
+                // ScalpRiskGuard: deterministic target & SL post-processing
+                const guardResult = scalpRiskGuard.process(signal, mtf);
+                if (!guardResult.valid) {
+                    lastNoTrade = { action: 'NO_TRADE', confidence: signal?.confidence || 0,
+                        reasoning: `ScalpRiskGuard rejected: ${guardResult.error || 'invalid setup'}`, mtf };
+                    console.log(`[On-Demand] ❌ ${trySym} → ScalpRiskGuard rejected: ${guardResult.error}${isRetry ? ' [retry]' : ''}`);
+                    continue;
+                }
+
                 const currentPrice = primary.price;
+                const spec         = catalogRef.getBySymbol(trySym);
+                const contractVal  = parseFloat(spec?.contract_value || 1);
                 const entry        = signal.entry || currentPrice;
-                const leverage     = userPrefs.maxLeverage || 10;
+                const maxAllowedLev = Math.min(spec?.max_leverage || 10, userPrefs.maxLeverage || 10);
+                const sigLeverage  = Math.min(signal.leverage || maxAllowedLev, maxAllowedLev);
                 const tradeBudget  = walletContext.tradeBudget ?? 10000;
-                const sigLeverage  = Math.min(signal.leverage || leverage, leverage);
+                
                 if (!signal.quantity && entry) {
-                    const marginPerContract = entry / sigLeverage;
+                    const marginPerContract = (entry * contractVal) / sigLeverage;
                     signal.quantity = Math.max(1, Math.floor(tradeBudget / marginPerContract));
                 }
                 if (signal.quantity && entry) {
-                    const marginNeeded = (signal.quantity * entry) / sigLeverage;
+                    const marginNeeded = (signal.quantity * entry * contractVal) / sigLeverage;
                     if (marginNeeded > tradeBudget * 1.1) {
-                        signal.quantity = Math.max(1, Math.floor((tradeBudget * sigLeverage) / entry));
+                        signal.quantity = Math.max(1, Math.floor((tradeBudget * sigLeverage) / (entry * contractVal)));
                     }
                 }
                 signal.leverage = sigLeverage;

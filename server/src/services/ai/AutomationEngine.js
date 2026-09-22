@@ -19,6 +19,8 @@ const DailyReport      = require('../../models/DailyReport');
 const PaperWallet      = require('../../models/PaperWallet');
 const PaperPosition    = require('../../models/PaperPosition');
 const notificationSvc  = require('../NotificationService');
+const autoSignalWatcher = require('./AutoSignalWatcher');
+const productCatalog   = require('../ProductCatalog');
 
 // IST offset
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
@@ -59,6 +61,9 @@ class AutomationEngine {
 
         // Sync AutomationLog outcomes from closed positions every 3 minutes
         this._syncTimer = setInterval(() => this._syncAutomationLogOutcomes().catch(() => {}), 3 * 60 * 1000);
+
+        // Start AutoSignalWatcher — monitors pending limit orders (live + paper) every 10s
+        autoSignalWatcher.start(io, wsManager);
 
         console.log('[AutomationEngine] Initialised ✓');
     }
@@ -146,14 +151,16 @@ class AutomationEngine {
 
         // ── Balance check ────────────────────────────────────────────────────
         const walletBalance = await this._getBalance(mode, prefs);
-        const minBalancePct = (cfg.minBalancePct ?? 5) / 100;
+        const minBalancePct = (cfg.minBalancePct !== undefined && cfg.minBalancePct !== null)
+            ? (cfg.minBalancePct / 100)
+            : 0.05;
         const minBalance    = (cfg.estimatedWalletUSD || 100) * minBalancePct;
 
-        if (walletBalance !== null && walletBalance < minBalance) {
+        if (walletBalance !== null && minBalance > 0 && walletBalance < minBalance) {
             console.log(`[AutomationEngine] ⚠ ${mode} balance $${walletBalance.toFixed(2)} < $${minBalance.toFixed(2)} minimum — skipping`);
             await AutomationLog.create({
                 mode, date, cycleAction: 'SKIPPED_BALANCE',
-                notes: `Balance $${walletBalance.toFixed(2)} below 5% threshold $${minBalance.toFixed(2)}`
+                notes: `Balance $${walletBalance.toFixed(2)} below threshold $${minBalance.toFixed(2)}`
             });
             this._emit('automation_cycle', { mode, action: 'SKIPPED_BALANCE', reason: 'Low balance' });
             return;
@@ -173,9 +180,10 @@ class AutomationEngine {
         const rawPrefs = (prefs && typeof prefs.toObject === 'function') ? prefs.toObject() : (prefs || {});
         const scanPrefs = {
             ...rawPrefs,
-            aiProvider:   prefs.aiProvider || 'groq',
-            maxLeverage:  cfg.maxLeverage  || 20,
-            minLeverage:  cfg.minLeverage  || 10,
+            aiProvider:    prefs.aiProvider || 'groq',
+            maxLeverage:   cfg.maxLeverage  || 20,
+            minLeverage:   cfg.minLeverage  || 10,
+            minConfidence: cfg.minConfidence || 65,
             riskTolerance: prefs.riskTolerance || 'medium',
         };
 
@@ -215,11 +223,12 @@ class AutomationEngine {
         }
 
         // ── Confidence gate ───────────────────────────────────────────────────
-        if ((signal.confidence || 0) < (cfg.minConfidence || 70)) {
-            console.log(`[AutomationEngine] ⬜ ${mode} confidence ${signal.confidence}% < ${cfg.minConfidence}% threshold — skipping`);
+        const minConfThreshold = cfg.minConfidence !== undefined ? cfg.minConfidence : 65;
+        if ((signal.confidence || 0) < minConfThreshold) {
+            console.log(`[AutomationEngine] ⬜ ${mode} confidence ${signal.confidence}% < ${minConfThreshold}% threshold — skipping`);
             await AutomationLog.create({
                 mode, date, cycleAction: 'NO_TRADE', confidence: signal.confidence,
-                notes: `Confidence ${signal.confidence}% below minimum ${cfg.minConfidence}%`
+                notes: `Confidence ${signal.confidence}% below minimum ${minConfThreshold}%`
             });
             return;
         }
@@ -241,19 +250,23 @@ class AutomationEngine {
         }
 
         // ── Clamp leverage to user's allowed range ────────────────────────────
-        const rawLeverage    = execSignal.leverage || cfg.maxLeverage;
-        const leverage       = Math.max(cfg.minLeverage, Math.min(cfg.maxLeverage, rawLeverage));
+        const rawLeverage    = execSignal.leverage || cfg.maxLeverage || 20;
+        const minLev         = cfg.minLeverage || 1;
+        const maxLev         = cfg.maxLeverage || 20;
+        const leverage       = Math.max(Math.min(minLev, maxLev), Math.min(Math.max(minLev, maxLev), rawLeverage));
         execSignal.leverage  = leverage;
 
-        // ── Recalculate quantity from margin budget ───────────────────────────
-        const entry = execSignal.entry || execSignal.entryPrice || 0;
+        // ── Recalculate quantity from margin budget with contract_value ───────
+        const spec           = productCatalog.getBySymbol(execSignal.symbol);
+        const contractVal    = spec?.contract_value || 1;
+        const entry          = execSignal.entry || execSignal.entryPrice || 0;
         if (entry > 0) {
-            const marginPerContract = entry / leverage;
+            const marginPerContract = (entry * contractVal) / leverage;
             const rawQty = Math.floor(marginBudget / marginPerContract);
 
             if (rawQty < 1) {
                 // Even 1 contract costs more than our budget — skip this coin
-                const cost1 = marginPerContract.toFixed(2);
+                const cost1 = marginPerContract.toFixed(4);
                 const reason = `Insufficient margin: 1 contract of ${execSignal.symbol} costs $${cost1} but budget is $${marginBudget.toFixed(2)}`;
                 console.log(`[AutomationEngine] ⛔ ${mode} ${reason}`);
                 await AutomationLog.create({
@@ -270,7 +283,7 @@ class AutomationEngine {
         }
 
         const actualMargin = entry > 0
-            ? (execSignal.quantity * entry) / leverage
+            ? (execSignal.quantity * entry * contractVal) / leverage
             : marginBudget;
 
         console.log(`[AutomationEngine] ✅ ${mode}${reverseMode ? ' [REVERSED]' : ''} ${execSignal.action} ${execSignal.symbol} conf:${signal.confidence}% lev:${leverage}x margin:$${actualMargin.toFixed(2)}`);
@@ -365,7 +378,7 @@ class AutomationEngine {
                 symbol:      signal.symbol.toUpperCase(),
                 side:        signal.action === 'BUY' ? 'buy' : 'sell',
                 size:        signal.quantity,
-                orderType:   'market_order',
+                orderType:   'limit_order',
                 price:       signal.entry,
                 stopLoss:    signal.stopLoss,
                 takeProfit:  signal.target1,

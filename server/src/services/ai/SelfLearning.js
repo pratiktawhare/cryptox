@@ -168,10 +168,10 @@ class SelfLearning {
     _symbolRecommendation(winRate, avgRR) {
         const wr = parseFloat(winRate);
         const rr = avgRR;
-        if (wr >= 60 && rr >= 1.5) return 'HIGH_CONFIDENCE — historically strong signals on this symbol';
-        if (wr >= 50 && rr >= 1.0) return 'MODERATE — decent win rate, maintain current approach';
-        if (wr < 40)               return 'CAUTION — low win rate; tighten entry conditions or skip';
-        if (rr < 0.5)              return 'CAUTION — R/R below 1:1; widen TP or tighten SL';
+        if (wr >= 80 && rr >= 0.30) return 'HIGH_CONFIDENCE — historically strong scalp signals on this symbol';
+        if (wr >= 70 && rr >= 0.25) return 'MODERATE — solid win rate, maintain current scalp approach';
+        if (wr < 70)                return 'CAUTION — win rate below 70% target; require stronger confluence or skip';
+        if (rr < 0.25)              return 'CAUTION — scalp R/R too low (< 0.25); ensure target is at least 0.35R';
         return 'NEUTRAL';
     }
 

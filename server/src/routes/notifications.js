@@ -14,7 +14,8 @@ router.use(auth);
  */
 router.get('/', async (req, res) => {
     try {
-        const filter = { userId: req.user._id };
+        const userId = req.user?.id || req.user?._id;
+        const filter = { userId };
         if (req.query.unread === 'true') filter.isRead = false;
 
         const notifications = await Notification
@@ -35,8 +36,9 @@ router.get('/', async (req, res) => {
  */
 router.get('/unread-count', async (req, res) => {
     try {
+        const userId = req.user?.id || req.user?._id;
         const count = await Notification.countDocuments({
-            userId: req.user._id,
+            userId,
             isRead: false,
         });
         res.json({ success: true, count });
@@ -51,8 +53,9 @@ router.get('/unread-count', async (req, res) => {
  */
 router.patch('/:id/read', async (req, res) => {
     try {
+        const userId = req.user?.id || req.user?._id;
         const doc = await Notification.findOneAndUpdate(
-            { _id: req.params.id, userId: req.user._id },
+            { _id: req.params.id, userId },
             { isRead: true, readAt: new Date() },
             { new: true }
         );
@@ -69,8 +72,9 @@ router.patch('/:id/read', async (req, res) => {
  */
 router.post('/mark-all-read', async (req, res) => {
     try {
+        const userId = req.user?.id || req.user?._id;
         await Notification.updateMany(
-            { userId: req.user._id, isRead: false },
+            { userId, isRead: false },
             { isRead: true, readAt: new Date() }
         );
         res.json({ success: true });
@@ -80,13 +84,29 @@ router.post('/mark-all-read', async (req, res) => {
 });
 
 /**
+ * DELETE /api/notifications/clear-all
+ * Deletes all notifications for the authenticated user.
+ */
+router.delete('/clear-all', async (req, res) => {
+    try {
+        const userId = req.user?.id || req.user?._id;
+        await Notification.deleteMany({ userId });
+        res.json({ success: true, message: 'All notifications cleared' });
+    } catch (err) {
+        console.error('[notifications] DELETE /clear-all error:', err.message);
+        res.status(500).json({ success: false, message: 'Failed to clear notifications' });
+    }
+});
+
+/**
  * DELETE /api/notifications/:id
  */
 router.delete('/:id', async (req, res) => {
     try {
+        const userId = req.user?.id || req.user?._id;
         const doc = await Notification.findOneAndDelete({
             _id: req.params.id,
-            userId: req.user._id,
+            userId,
         });
         if (!doc) return res.status(404).json({ success: false, message: 'Not found' });
         res.json({ success: true });

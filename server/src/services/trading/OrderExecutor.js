@@ -23,12 +23,12 @@ const positionTracker = require('./PositionTracker');
 
 // ─── Safety limits (configurable per user in Phase 9) ─────────────────────────
 const SAFETY = {
-    MAX_LEVERAGE:      100,      // Cap on maximum leverage
-    MIN_ORDER_SIZE:    1,        // Min contracts per order (exchange minimum)
-    MAX_CONCURRENT:    5,        // Max open positions
-    MIN_RR_RATIO:      1.5,      // Minimum risk/reward (SL+TP must be set)
-    REQUIRE_SL:        true,     // Force stop-loss on every order
-    MIN_MARGIN_PCT:    0.1,      // 10% margin buffer required
+    MAX_LEVERAGE:      100,
+    MIN_ORDER_SIZE:    1,
+    MAX_CONCURRENT:    5,
+    MIN_RR_RATIO:      0.30,    // Lowered for scalp signals (high win rate, low R/R by design)
+    REQUIRE_SL:        true,
+    MIN_MARGIN_PCT:    0.1,
 };
 
 class OrderExecutor {
@@ -74,11 +74,23 @@ class OrderExecutor {
             // Step 4: Update history record
             historyDoc.orderId       = String(order.id);
             historyDoc.clientOrderId = order.client_order_id;
-            historyDoc.status        = order.state === 'open' ? 'open' : 'pending';
-            historyDoc.filledPrice   = order.average_fill_price ? parseFloat(order.average_fill_price) : null;
-            historyDoc.filledSize    = order.size_filled ? parseInt(order.size_filled) : null;
-            historyDoc.filledAt      = order.size_filled > 0 ? new Date() : null;
-            historyDoc.rawResponse   = order;
+
+            const isFilled = order.state === 'closed' || order.state === 'filled' || (order.size_filled && parseInt(order.size_filled) > 0);
+            if (isFilled) {
+                historyDoc.status      = 'filled';
+                historyDoc.filledPrice = order.average_fill_price ? parseFloat(order.average_fill_price) : null;
+                historyDoc.filledSize  = order.size_filled ? parseInt(order.size_filled) : null;
+                historyDoc.filledAt    = new Date();
+            } else if (params.orderType === 'limit_order') {
+                // Limit order placed but not yet filled — AutoSignalWatcher monitors it
+                historyDoc.status             = 'pending_limit';
+                historyDoc.entryOrderPlacedAt = new Date();
+            } else {
+                historyDoc.status      = order.state === 'open' ? 'open' : 'pending';
+                historyDoc.filledPrice = order.average_fill_price ? parseFloat(order.average_fill_price) : null;
+                historyDoc.filledSize  = order.size_filled ? parseInt(order.size_filled) : null;
+                historyDoc.filledAt    = order.size_filled > 0 ? new Date() : null;
+            }
             await historyDoc.save();
 
             console.log(`[OrderExecutor] ✅ ${params.side.toUpperCase()} ${params.size} ${params.symbol} @ ${params.price || 'MARKET'} — Order ${order.id}`);

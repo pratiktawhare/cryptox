@@ -108,6 +108,7 @@ router.patch('/settings', async (req, res) => {
     const ALLOWED = [
         'intervalMinutes', 'estimatedWalletUSD', 'tradePct',
         'minConfidence', 'minLeverage', 'maxLeverage',
+        'minBalancePct', // Persist user's min balance threshold percentage
         'trailStopLoss', 'dailyReportEnabled', 'dailyReportTime',
         'reverseMode',   // Reverse Engineering Mode flag
     ];
@@ -120,11 +121,19 @@ router.patch('/settings', async (req, res) => {
     }
 
     try {
-        const prefs = await UserPreferences.findOneAndUpdate(
-            {},
+        const query = req.user?.id ? { userId: req.user.id } : {};
+        let prefs = await UserPreferences.findOneAndUpdate(
+            query,
             { $set: update },
             { returnDocument: 'after' }
         );
+        if (!prefs) {
+            prefs = await UserPreferences.findOneAndUpdate(
+                {},
+                { $set: update },
+                { returnDocument: 'after' }
+            );
+        }
 
         // If automation is running and interval changed, restart to pick up new interval
         const engineStatus = automationEngine.getStatus();

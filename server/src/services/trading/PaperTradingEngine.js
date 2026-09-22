@@ -22,6 +22,7 @@ const PaperWallet   = require('../../models/PaperWallet');
 const PaperPosition = require('../../models/PaperPosition');
 const TradeHistory  = require('../../models/TradeHistory');
 const PaperOrder    = require('../../models/PaperOrder');
+const productCatalog= require('../ProductCatalog');
 
 // In-memory live price cache: symbol → price (fed from WS manager)
 const _prices = new Map();
@@ -110,9 +111,11 @@ class PaperTradingEngine {
             ? parseFloat(params.price)
             : currentPrice;
 
-        const leverage  = parseInt(params.leverage) || 1;
-        const size      = parseInt(params.size) || 1;
-        const margin    = (fillPrice * size) / leverage;
+        const spec        = productCatalog.getBySymbol(params.symbol);
+        const contractVal = spec?.contract_value || 1;
+        const leverage    = parseInt(params.leverage) || 1;
+        const size        = parseInt(params.size) || 1;
+        const margin      = (fillPrice * size * contractVal) / leverage;
 
         // Check wallet has enough margin
         const wallet = await this._getOrCreateWallet(userId);
@@ -151,9 +154,11 @@ class PaperTradingEngine {
                 leverage,
                 status: 'open',
                 signalId: params.signalId || null,
+                source: params.source || 'manual',
+                entryOrderPlacedAt: new Date(),
             });
 
-            // Create TradeHistory record (mode: 'paper', status: 'open')
+            // Create TradeHistory record (mode: 'paper', status: 'pending_limit')
             const history = await TradeHistory.create({
                 userId,
                 symbol:    params.symbol.toUpperCase(),
@@ -164,11 +169,12 @@ class PaperTradingEngine {
                 leverage,
                 stopLoss:  params.stopLoss ? parseFloat(params.stopLoss) : null,
                 takeProfit: params.takeProfit ? parseFloat(params.takeProfit) : null,
-                status:    'open',
+                status:    'pending_limit',
                 mode:      'paper',
                 orderId:   String(order._id),
                 signalId:  params.signalId || null,
                 source:    params.signalId ? 'signal' : 'paper',
+                entryOrderPlacedAt: new Date(),
             });
 
             const _io = io || this.io;
@@ -221,6 +227,7 @@ class PaperTradingEngine {
                 symbol:      params.symbol.toUpperCase(),
                 side:        params.side,
                 size,
+                contractValue: contractVal,
                 entryPrice:  fillPrice,
                 leverage,
                 stopLoss:    params.stopLoss ? parseFloat(params.stopLoss) : null,
