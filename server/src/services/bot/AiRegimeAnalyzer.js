@@ -23,6 +23,7 @@ const BotEvent = require('../../models/BotEvent');
 const candleStore = require('./CandleStore');
 const { analyzeSymbol } = require('./MarketAnalyzer');
 const productCatalog = require('../ProductCatalog');
+const { decryptData } = require('../../utils/encryption');
 
 const REGIME_SYSTEM_PROMPT = `You are an elite quantitative crypto risk manager and market regime specialist.
 Your role is to analyze multi-coin market telemetry across benchmark assets (BTC, ETH, SOL) and overall market breadth to classify the macro market regime.
@@ -131,8 +132,22 @@ class AiRegimeAnalyzer {
             let customKeys = null;
             try {
                 const prefs = await UserPreferences.findOne({}).sort({ updatedAt: -1 });
-                if (prefs?.groqKeyPool?.keys?.length > 0) {
-                    customKeys = prefs.groqKeyPool;
+                if (Array.isArray(prefs?.groqKeys) && prefs.groqKeys.length > 0) {
+                    const keys = [];
+                    for (const k of prefs.groqKeys) {
+                        if (k.isActive !== false && k.keyEncrypted) {
+                            try {
+                                const dec = decryptData(k.keyEncrypted);
+                                if (dec) keys.push({ key: dec, nickname: k.nickname || 'Groq Key' });
+                            } catch (_) {}
+                        }
+                    }
+                    if (keys.length > 0) {
+                        customKeys = {
+                            keys,
+                            rotationIntervalMin: prefs.groqRotationIntervalMin !== undefined ? prefs.groqRotationIntervalMin : 0
+                        };
+                    }
                 }
             } catch (prefErr) {
                 // Ignore DB error, will use default system key

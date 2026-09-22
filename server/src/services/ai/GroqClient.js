@@ -103,6 +103,7 @@ class GroqClient {
         } else if (rotationIntervalMin === 0) {
             this._currentKeyIndex = (this._currentKeyIndex + 1) % keys.length;
             this._lastRotationAt = now;
+            console.log(`[Groq] 🔄 Round-robin key switch (per-call) → switched to Key #${this._currentKeyIndex + 1} (${keys[this._currentKeyIndex].nickname})`);
         }
 
         const ordered = [];
