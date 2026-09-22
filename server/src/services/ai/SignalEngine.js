@@ -586,6 +586,10 @@ class SignalEngine {
                 for (const candidate of filteredCandidates) {
                     if (llmCallsCount >= maxLlmCalls) break;
                     
+                    if (llmCallsCount > 0) {
+                        await new Promise(resolve => setTimeout(resolve, 1200));
+                    }
+
                     console.log(`[On-Demand] LLM Call #${llmCallsCount+1}/${maxLlmCalls} for: ${candidate.symbol} (Bias Score: ${candidate.score.toFixed(2)}, Margin/contract: $${candidate.marginFor1.toFixed(4)})`);
                     llmCallsCount++;
                     

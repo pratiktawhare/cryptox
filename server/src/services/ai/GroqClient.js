@@ -24,9 +24,8 @@ const API_URL = 'https://api.groq.com/openai/v1/chat/completions';
  */
 const FREE_TIER_MODELS = [
     'openai/gpt-oss-120b',   // Primary: official replacement for llama-3.3-70b (Aug 2026)
-    'qwen/qwen3.6-27b',      // Fallback 1: Alibaba Qwen, free tier, strong reasoning
-    'qwen/qwen3.8-27b',      // Fallback 2: newer Qwen variant
-    'openai/gpt-oss-20b',    // Fallback 3: lighter OpenAI OSS model
+    'qwen/qwen3.8-27b',      // Fallback 1: Alibaba Qwen, free tier, strong reasoning
+    'openai/gpt-oss-20b',    // Fallback 2: lighter OpenAI OSS model
 ];
 
 /**
@@ -185,6 +184,11 @@ class GroqClient {
                         break; // Try next key in pool
                     }
 
+                    if (errCode === 'json_validate_failed' || errMsg.includes('max completion tokens')) {
+                        console.warn(`[Groq] ⚠️ Model "${model}" hit JSON token limit on ${keyName} — trying next model in pool...`);
+                        continue; // Try next model
+                    }
+
                     console.error('[Groq] API error:', err.response?.data || err.message);
                     if (err instanceof SyntaxError || err.message?.includes('JSON') || err.message?.includes('SyntaxError')) {
                         return { action: 'NO_TRADE', confidence: 0, reasoning: 'AI response parse error: ' + errMsg };
@@ -221,7 +225,7 @@ class GroqClient {
                     { role: 'user',   content: userPrompt   },
                 ],
                 temperature:     0.15,
-                max_tokens:      2048,
+                max_tokens:      8192,
                 response_format: { type: 'json_object' }, // Forces JSON output
             },
             {
