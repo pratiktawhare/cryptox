@@ -91,7 +91,7 @@ router.get('/:symbol', async (req, res) => {
 router.post('/analyze/:symbol', async (req, res) => {
     try {
         let symbol = req.params.symbol.toUpperCase();
-        const { action = 'all', confidenceRange = 'all' } = req.body || {};
+        const { action = 'all', confidenceRange = 'all', mode = 'paper' } = req.body || {};
         const productCatalog = require('../services/ProductCatalog');
 
         if (symbol !== 'RANDOM' && symbol !== 'CHEAP' && productCatalog && productCatalog.isReady) {
@@ -112,17 +112,31 @@ router.post('/analyze/:symbol', async (req, res) => {
         if (!userPrefs) {
             userPrefs = await UserPreferences.findOne({}).sort({ updatedAt: -1 }).lean() || {};
         }
-        const PaperWallet = require('../models/PaperWallet');
-        const paperWallet = await PaperWallet.findOne({ userId: req.user.id }).lean();
 
-        let walletContext = { availableBalance: 10000, tradeBudget: 3000, mode: 'paper' };
-        if (paperWallet) {
-            const available = paperWallet.available ?? paperWallet.balance ?? 10000;
-            const maxSinglePct = userPrefs.maxSingleTradePct ?? 30;
-            const reservePct   = userPrefs.minReservePct   ?? 20;
-            const usable = available * (1 - reservePct / 100);
-            const tradeBudget = Math.floor(usable * (maxSinglePct / 100));
-            walletContext = { availableBalance: available, tradeBudget, mode: 'paper' };
+        // Inherit mode configuration if present (paperAuto or liveAuto)
+        const modeConfig = userPrefs?.[`${mode}Auto`] || {};
+        const isReversed = modeConfig.reverseMode === true;
+        let walletContext = { availableBalance: 10000, tradeBudget: 3000, mode, reverseMode: isReversed };
+
+        if (modeConfig.estimatedWalletUSD) {
+            const estWallet = modeConfig.estimatedWalletUSD;
+            const tradePct = modeConfig.tradePct || 20;
+            const tradeBudget = Math.max(10, Math.floor((estWallet * tradePct) / 100));
+            walletContext = { availableBalance: estWallet, tradeBudget, mode, reverseMode: isReversed };
+            if (modeConfig.maxLeverage) userPrefs.maxLeverage = modeConfig.maxLeverage;
+            if (modeConfig.minLeverage) userPrefs.minLeverage = modeConfig.minLeverage;
+            if (modeConfig.minConfidence) userPrefs.minConfidence = modeConfig.minConfidence;
+        } else {
+            const PaperWallet = require('../models/PaperWallet');
+            const paperWallet = await PaperWallet.findOne({ userId: req.user.id }).lean();
+            if (paperWallet) {
+                const available = paperWallet.available ?? paperWallet.balance ?? 10000;
+                const maxSinglePct = userPrefs.maxSingleTradePct ?? 30;
+                const reservePct   = userPrefs.minReservePct   ?? 20;
+                const usable = available * (1 - reservePct / 100);
+                const tradeBudget = Math.floor(usable * (maxSinglePct / 100));
+                walletContext = { availableBalance: available, tradeBudget, mode, reverseMode: isReversed };
+            }
         }
 
         const result = await signalEngine.analyzeNow(symbol, userPrefs, {
@@ -130,6 +144,21 @@ router.post('/analyze/:symbol', async (req, res) => {
             requestedAction: action,
             requestedConfRange: confidenceRange
         });
+
+        // If reverseMode is enabled for this mode, provide reversed preview
+        if (isReversed && result?.signal && result.signal.action !== 'NO_TRADE') {
+            const raw = result.signal;
+            result.reversedSignal = {
+                ...raw,
+                action: raw.action === 'BUY' ? 'SELL' : 'BUY',
+                stopLoss: raw.target1,
+                target1: raw.stopLoss,
+                target2: raw.stopLoss,
+                notes: `[REVERSED] Original AI: ${raw.action} @ ${raw.entry}. ${raw.notes || ''}`
+            };
+            result.isReversed = true;
+        }
+
         res.json(result);
     } catch (err) {
         console.error('[Signals] On-demand analysis error:', err.message);

@@ -582,6 +582,29 @@ class PaperTradingEngine {
             _io.emit('paper_position_closed', data);
         }
 
+        // Notify user of their actual trade outcome when target or stop loss is hit
+        if (status === 'closed_tp' || status === 'closed_sl') {
+            try {
+                const notificationService = require('../NotificationService');
+                const isWin = status === 'closed_tp';
+                const sym = (position.symbol || '').replace('USD', '/USD');
+                const pnlStr = `${netPnl >= 0 ? '+' : ''}$${Number(netPnl).toFixed(2)}`;
+                const title = isWin ? `🎯 Target Hit: ${sym}` : `🛑 Stop Loss: ${sym}`;
+                const message = `[Paper] ${isWin ? 'Profit' : 'Loss'}: ${pnlStr} on ${position.side.toUpperCase()} @ $${Number(closePrice).toFixed(4)}`;
+
+                notificationService._createAndEmit(String(position.userId), {
+                    type: 'resolved',
+                    title,
+                    message,
+                    signalId: position.signalId || null,
+                    priority: 'high',
+                    sound: isWin ? 'target_hit' : 'stoploss_hit',
+                }).catch(() => {});
+            } catch (notifErr) {
+                console.warn('[PaperEngine] Could not send trade outcome notification:', notifErr.message);
+            }
+        }
+
         return { position, pnl, wallet };
     }
 

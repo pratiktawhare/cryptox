@@ -400,7 +400,7 @@ class AutomationEngine {
         const user = await User.findOne({});
         if (!user) throw new Error('No user found for live execution');
 
-        return await this._orderExecutor.execute(user._id, {
+        const historyDoc = await this._orderExecutor.execute(user._id, {
             symbol:     signal.symbol.toUpperCase(),
             side:       signal.action === 'BUY' ? 'buy' : 'sell',
             size:       signal.quantity,
@@ -412,6 +412,35 @@ class AutomationEngine {
             signalId:   signal._id,
             source:     'automation',
         }, this._io);
+
+        // Track live trade in BotTrade so PositionMonitor monitors Delta fill & notifies user when TP/SL is hit
+        try {
+            const BotTrade = require('../../models/BotTrade');
+            const spec = this._catalog?.getBySymbol?.(signal.symbol);
+            const contractVal = parseFloat(spec?.contract_value || 1);
+            const margin = (signal.quantity * (signal.entry || 1) * contractVal) / (signal.leverage || 10);
+            await BotTrade.create({
+                userId: user._id,
+                mode: 'live',
+                symbol: signal.symbol.toUpperCase(),
+                direction: signal.action === 'BUY' ? 'long' : 'short',
+                entryPrice: signal.entry,
+                stopLoss: signal.stopLoss,
+                takeProfit: signal.target1,
+                leverage: signal.leverage || 10,
+                quantity: signal.quantity,
+                margin,
+                orderId: historyDoc?.orderId || null,
+                signalId: signal._id,
+                source: 'automation',
+                entryTime: new Date(),
+                result: 'open',
+            });
+        } catch (botTradeErr) {
+            console.warn('[AutomationEngine] Could not create BotTrade for live order tracking:', botTradeErr.message);
+        }
+
+        return historyDoc;
     }
 
     // ─── Stop-loss trailing ──────────────────────────────────────────────────

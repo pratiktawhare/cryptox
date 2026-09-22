@@ -42,6 +42,31 @@ class NotificationService {
     async notifySignalResolved(signal, outcome, exitPrice, realisedPnlPct) {
         try {
             if (outcome === 'timeout') return;
+            if (!signal?._id) return;
+
+            // Only notify users who actually opened or took a trade for this signal!
+            // Do NOT broadcast generic AI signal resolutions to all users.
+            const BotTrade = require('../models/BotTrade');
+            const PaperPosition = require('../models/PaperPosition');
+            const TradeHistory = require('../models/TradeHistory');
+
+            const [botTrades, paperPositions, tradeHistories] = await Promise.all([
+                BotTrade.find({ signalId: signal._id }).select('userId').lean(),
+                PaperPosition.find({ signalId: signal._id }).select('userId').lean(),
+                TradeHistory.find({ signalId: signal._id }).select('userId').lean(),
+            ]);
+
+            const userIds = new Set([
+                ...botTrades.map(t => String(t.userId)),
+                ...paperPositions.map(p => String(p.userId)),
+                ...tradeHistories.map(h => String(h.userId)),
+            ]);
+
+            // If no user took this trade, return immediately — do not notify anyone!
+            if (userIds.size === 0) {
+                return;
+            }
+
             const sym    = (signal.symbol || '').replace('USD', '/USD');
             const isWin  = outcome === 'win';
             const pctStr = realisedPnlPct != null
@@ -52,17 +77,28 @@ class NotificationService {
                 ? ep.toFixed(6)
                 : ep.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
-            const title   = isWin ? `Target Hit: ${sym}` : `Stop Loss: ${sym}`;
+            const title   = isWin ? `🎯 Target Hit: ${sym}` : `🛑 Stop Loss: ${sym}`;
             const message = `${pctStr ? pctStr + ' ' : ''}${isWin ? 'profit' : 'loss'} on ${signal.action || ''} · Exit $${epStr}`;
 
-            await this._notifyAllUsers({
-                type:     'resolved',
-                title,
-                message,
-                signalId: signal._id,
-                priority: 'high',
-                sound:    isWin ? 'target_hit' : 'stoploss_hit',
-            });
+            const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+            for (const userId of userIds) {
+                const alreadyNotified = await Notification.findOne({
+                    userId,
+                    signalId: signal._id,
+                    createdAt: { $gte: twoMinutesAgo },
+                }).lean();
+
+                if (!alreadyNotified) {
+                    await this._createAndEmit(userId, {
+                        type:     'resolved',
+                        title,
+                        message,
+                        signalId: signal._id,
+                        priority: 'high',
+                        sound:    isWin ? 'target_hit' : 'stoploss_hit',
+                    });
+                }
+            }
         } catch (err) {
             console.error('[NotificationService] notifySignalResolved error:', err.message);
         }

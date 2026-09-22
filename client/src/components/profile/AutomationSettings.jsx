@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
+import TradeConfirmDialog from '../trading/TradeConfirmDialog';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -56,7 +58,18 @@ function Toggle({ label, hint, checked, onChange }) {
 
 // ─── Mode Panel ───────────────────────────────────────────────────────────────
 
-function ModePanel({ mode, status, config, onSave, onToggle, onToggleReverse, toggling = false, reverseToggling = false }) {
+function ModePanel({
+    mode,
+    status,
+    config,
+    onSave,
+    onToggle,
+    onToggleReverse,
+    toggling = false,
+    reverseToggling = false,
+    onAnalyzeNow,
+    analyzing = false
+}) {
     const isLive       = mode === 'live';
     const isRunning    = status?.running;
     const isReversed   = !!config?.reverseMode;
@@ -194,6 +207,29 @@ function ModePanel({ mode, status, config, onSave, onToggle, onToggleReverse, to
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap justify-end">
+                    <button
+                        type="button"
+                        onClick={() => onAnalyzeNow && onAnalyzeNow(mode)}
+                        disabled={analyzing}
+                        className="px-3 py-2 rounded-xl text-xs font-bold border border-crypto-primary/30 bg-crypto-primary/10 text-crypto-primary hover:bg-crypto-primary/20 transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5 shadow-sm"
+                        title={`Run on-demand AI market scan for ${isLive ? 'Live' : 'Paper'} mode`}
+                    >
+                        {analyzing ? (
+                            <>
+                                <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                                    <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                </svg>
+                                <span>Scanning…</span>
+                            </>
+                        ) : (
+                            <>
+                                <span>⚡</span>
+                                <span>Analyze Now</span>
+                            </>
+                        )}
+                    </button>
+
                     <button
                         onClick={() => onToggle(mode, !isRunning)}
                         disabled={toggling || reverseToggling}
@@ -382,12 +418,20 @@ function ModePanel({ mode, status, config, onSave, onToggle, onToggleReverse, to
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 const AutomationSettings = () => {
+    const navigate = useNavigate();
     const [tab, setTab]               = useState('paper');
     const [status, setStatus]         = useState({ paper: { running: false, config: {} }, live: { running: false, config: {} } });
     const [loading, setLoading]       = useState(true);
     const [toggling, setToggling]     = useState(false);
     const [reverseToggling, setRevToggling] = useState(false);
     const [toggleMsg, setToggleMsg]   = useState('');
+
+    // On-demand Analysis State
+    const [analyzing, setAnalyzing]         = useState(false);
+    const [analyzeSymbol, setAnalyzeSymbol] = useState('');
+    const [scanResult, setScanResult]       = useState(null);
+    const [tradeSignal, setTradeSignal]     = useState(null);
+    const [scanError, setScanError]         = useState('');
 
     const loadStatus = useCallback(async () => {
         try {
@@ -459,6 +503,50 @@ const AutomationSettings = () => {
         }
     };
 
+    const handleAnalyzeNow = async (specificSymbol) => {
+        const symbolToScan = (typeof specificSymbol === 'string' && specificSymbol.length > 0 && specificSymbol !== 'live' && specificSymbol !== 'paper')
+            ? specificSymbol
+            : (analyzeSymbol.trim() || 'RANDOM');
+
+        setAnalyzing(true);
+        setScanError('');
+        setScanResult(null);
+
+        try {
+            const res = await api.post(`/signals/analyze/${symbolToScan}`, {
+                action: 'all',
+                confidenceRange: 'all',
+                mode: tab
+            });
+            if (res.data) {
+                setScanResult({
+                    symbol: res.data.signal?.symbol || res.data.saved?.symbol || res.data.mtf?.symbol || symbolToScan,
+                    action: res.data.action || res.data.signal?.action || 'NO_TRADE',
+                    confidence: res.data.confidence !== undefined ? res.data.confidence : (res.data.signal?.confidence || 0),
+                    reasoning: res.data.reasoning || res.data.signal?.reasoning || 'No active trading setup found.',
+                    signal: res.data.signal,
+                    saved: res.data.saved,
+                    reversedSignal: res.data.reversedSignal,
+                    isReversed: !!res.data.isReversed,
+                    avgVolumeUsdt: res.data.avgVolumeUsdt || res.data.signal?.avgVolumeUsdt || res.data.saved?.avgVolumeUsdt || null,
+                    time: new Date().toLocaleTimeString()
+                });
+            }
+        } catch (err) {
+            console.error('Analyze now failed:', err);
+            const detail = err.response?.data?.error || err.message || 'Failed to complete market analysis.';
+            setScanError(detail);
+            setScanResult({
+                symbol: symbolToScan,
+                action: 'ERROR',
+                confidence: 0,
+                reasoning: detail
+            });
+        } finally {
+            setAnalyzing(false);
+        }
+    };
+
     if (loading) {
         return (
             <div className="bg-crypto-card border border-crypto-border rounded-xl p-8 animate-pulse">
@@ -471,12 +559,65 @@ const AutomationSettings = () => {
 
     return (
         <div className="bg-crypto-card border border-crypto-border rounded-xl overflow-hidden animate-fade-in">
-            {/* Header */}
-            <div className="px-5 py-4 border-b border-crypto-border">
-                <h3 className="text-sm font-bold text-crypto-heading">AI Trade Automation</h3>
-                <p className="text-xs text-crypto-muted mt-0.5">
-                    Automatically scan for trades every N minutes and execute when confidence is high enough
-                </p>
+            {/* Header with Analyze Now Action Bar */}
+            <div className="px-5 py-4 border-b border-crypto-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                    <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-bold text-crypto-heading">AI Trade Automation</h3>
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-crypto-primary/10 text-crypto-primary border border-crypto-primary/20">
+                            v2.1 Scalp Engine
+                        </span>
+                    </div>
+                    <p className="text-xs text-crypto-muted mt-0.5">
+                        Scheduled auto-trading & on-demand market analysis with micro-targets & wide stop loss
+                    </p>
+                </div>
+
+                {/* Quick Analyze Bar */}
+                <div className="flex items-center gap-2 flex-wrap">
+                    <div className="relative">
+                        <input
+                            type="text"
+                            placeholder="Auto (Cheap coins)"
+                            value={analyzeSymbol}
+                            onChange={e => setAnalyzeSymbol(e.target.value.toUpperCase())}
+                            onKeyDown={e => e.key === 'Enter' && handleAnalyzeNow()}
+                            className="text-xs px-2.5 py-1.5 rounded-lg bg-crypto-input border border-crypto-border text-crypto-heading placeholder-crypto-muted/50 focus:outline-none focus:ring-1 focus:ring-crypto-primary/40 focus:border-crypto-primary transition-all w-36"
+                        />
+                        {analyzeSymbol && (
+                            <button
+                                type="button"
+                                onClick={() => setAnalyzeSymbol('')}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 text-crypto-muted hover:text-crypto-heading text-xs cursor-pointer"
+                            >
+                                &times;
+                            </button>
+                        )}
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={() => handleAnalyzeNow()}
+                        disabled={analyzing}
+                        className="px-3.5 py-1.5 bg-gradient-to-r from-crypto-primary to-indigo-600 hover:from-crypto-primary/90 hover:to-indigo-500 text-white rounded-lg text-xs font-bold shadow-md shadow-crypto-primary/20 transition-all duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 whitespace-nowrap"
+                        title="Run immediate market scan using current settings"
+                    >
+                        {analyzing ? (
+                            <>
+                                <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                                    <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                </svg>
+                                <span>Scanning…</span>
+                            </>
+                        ) : (
+                            <>
+                                <span className="text-sm">⚡</span>
+                                <span>Analyze Now</span>
+                            </>
+                        )}
+                    </button>
+                </div>
             </div>
 
             {/* Tab switcher */}
@@ -501,6 +642,199 @@ const AutomationSettings = () => {
                 ))}
             </div>
 
+            {/* Live AI Scan Loading Indicator */}
+            {analyzing && (
+                <div className="mx-5 mt-4 p-4 rounded-xl border border-crypto-primary/30 bg-crypto-primary/5 flex items-center gap-3 animate-pulse">
+                    <div className="w-8 h-8 rounded-lg bg-crypto-primary/20 flex items-center justify-center text-crypto-primary flex-shrink-0">
+                        <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                            <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                    </div>
+                    <div className="flex-1">
+                        <div className="text-xs font-bold text-crypto-heading flex items-center gap-2">
+                            <span>🤖 AI Market Scan in Progress…</span>
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-crypto-primary/20 text-crypto-primary font-semibold">
+                                {tab.toUpperCase()} Mode
+                            </span>
+                        </div>
+                        <p className="text-[11px] text-crypto-muted mt-0.5">
+                            Evaluating candle momentum, ATR volatility, structural support/resistance, and scoring highest relevance setup...
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            {/* Live AI Scan Result Card */}
+            {scanResult && !analyzing && (
+                <div className={`mx-5 mt-4 p-4 md:p-5 rounded-2xl border backdrop-blur-md animate-fade-in relative shadow-lg ${
+                    scanResult.action === 'NO_TRADE'
+                        ? 'bg-amber-500/5 border-amber-500/30'
+                        : scanResult.action === 'ERROR'
+                        ? 'bg-red-500/5 border-red-500/30'
+                        : scanResult.action === 'BUY'
+                        ? 'bg-emerald-500/5 border-emerald-500/30'
+                        : 'bg-red-500/5 border-red-500/30'
+                }`}>
+                    {/* Close button */}
+                    <button
+                        onClick={() => setScanResult(null)}
+                        className="absolute top-3.5 right-4 text-crypto-muted hover:text-crypto-heading text-lg leading-none cursor-pointer"
+                        title="Dismiss result"
+                    >
+                        &times;
+                    </button>
+
+                    {/* Badges row */}
+                    <div className="flex items-center gap-2 mb-2.5 flex-wrap">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-crypto-primary bg-crypto-primary/10 px-2 py-0.5 rounded-md border border-crypto-primary/20 flex items-center gap-1">
+                            <span>⚡</span> Live Market Analysis
+                        </span>
+                        <span className="text-xs font-bold text-crypto-heading bg-crypto-bg px-2 py-0.5 rounded border border-crypto-border">
+                            {scanResult.symbol.replace('USD', '/USD')}
+                        </span>
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${tab === 'live' ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30' : 'bg-crypto-primary/15 text-crypto-primary border border-crypto-primary/30'}`}>
+                            {tab === 'live' ? '💰 Live Mode' : '📄 Paper Mode'}
+                        </span>
+                        {scanResult.avgVolumeUsdt > 0 && (
+                            <span className="text-[10px] text-crypto-muted bg-crypto-bg px-2 py-0.5 rounded border border-crypto-border">
+                                5m Vol: ${Number(scanResult.avgVolumeUsdt.toFixed(0)).toLocaleString()} USDT
+                            </span>
+                        )}
+                        {scanResult.time && (
+                            <span className="text-[10px] text-crypto-muted ml-auto mr-5">
+                                {scanResult.time}
+                            </span>
+                        )}
+                    </div>
+
+                    {/* Action Title & Confidence */}
+                    <div className="flex items-center gap-3 mb-2 flex-wrap">
+                        <div className={`text-base font-bold flex items-center gap-1.5 ${
+                            scanResult.action === 'BUY' ? 'text-emerald-400' :
+                            scanResult.action === 'SELL' ? 'text-red-400' :
+                            scanResult.action === 'NO_TRADE' ? 'text-amber-400' : 'text-red-400'
+                        }`}>
+                            {scanResult.action === 'BUY' && <span>▲ BUY Signal Generated</span>}
+                            {scanResult.action === 'SELL' && <span>▼ SELL Signal Generated</span>}
+                            {scanResult.action === 'NO_TRADE' && <span>⬜ Neutral / No Trade Setup</span>}
+                            {scanResult.action === 'ERROR' && <span>❌ Analysis Error</span>}
+                        </div>
+
+                        {scanResult.confidence > 0 && (
+                            <div className="flex items-center gap-1.5">
+                                <span className="text-xs text-crypto-muted">Confidence:</span>
+                                <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-crypto-card border border-crypto-border text-crypto-heading tabular-nums">
+                                    {scanResult.confidence}%
+                                </span>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Reverse mode banner */}
+                    {scanResult.isReversed && scanResult.reversedSignal && (
+                        <div className="mb-3 px-3 py-2 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-300 text-xs flex items-center gap-2">
+                            <span>🔄</span>
+                            <span>
+                                <strong>Reverse Engineering Mode Active:</strong> Original AI: {scanResult.signal?.action} @ {scanResult.signal?.entry} → Executed as <strong className="text-white">{scanResult.reversedSignal.action}</strong>
+                            </span>
+                        </div>
+                    )}
+
+                    {/* Pricing / Levels Grid if active setup */}
+                    {scanResult.action !== 'NO_TRADE' && scanResult.action !== 'ERROR' && scanResult.signal && (
+                        (() => {
+                            const activeSig = (scanResult.isReversed && scanResult.reversedSignal) ? scanResult.reversedSignal : scanResult.signal;
+                            const entry = activeSig.entry || 0;
+                            const tp = activeSig.target1 || 0;
+                            const sl = activeSig.stopLoss || 0;
+                            const tpPct = entry && tp ? Math.abs(((tp - entry) / entry) * 100).toFixed(2) : null;
+                            const slPct = entry && sl ? Math.abs(((sl - entry) / entry) * 100).toFixed(2) : null;
+
+                            return (
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                                    <div className="bg-crypto-bg/80 border border-crypto-border/60 rounded-xl p-2.5">
+                                        <div className="text-[10px] text-crypto-muted uppercase tracking-wider">Entry Price</div>
+                                        <div className="text-sm font-bold text-crypto-heading font-mono mt-0.5">
+                                            ${entry > 0 ? entry : 'Market'}
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-2.5">
+                                        <div className="text-[10px] text-emerald-400 uppercase tracking-wider font-semibold flex items-center justify-between">
+                                            <span>Target (TP)</span>
+                                            {tpPct && <span className="text-[9px]">+{tpPct}%</span>}
+                                        </div>
+                                        <div className="text-sm font-bold text-emerald-400 font-mono mt-0.5">
+                                            ${tp || '—'}
+                                        </div>
+                                        <div className="text-[9px] text-emerald-400/70 mt-0.5">Micro scalp target</div>
+                                    </div>
+
+                                    <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-2.5">
+                                        <div className="text-[10px] text-red-400 uppercase tracking-wider font-semibold flex items-center justify-between">
+                                            <span>Stop Loss (SL)</span>
+                                            {slPct && <span className="text-[9px]">-{slPct}%</span>}
+                                        </div>
+                                        <div className="text-sm font-bold text-red-400 font-mono mt-0.5">
+                                            ${sl || '—'}
+                                        </div>
+                                        <div className="text-[9px] text-red-400/70 mt-0.5">Wide structural safety</div>
+                                    </div>
+
+                                    <div className="bg-crypto-bg/80 border border-crypto-border/60 rounded-xl p-2.5">
+                                        <div className="text-[10px] text-crypto-muted uppercase tracking-wider">Leverage & Qty</div>
+                                        <div className="text-sm font-bold text-crypto-heading font-mono mt-0.5">
+                                            {activeSig.leverage || 10}× · {activeSig.quantity || 1} contracts
+                                        </div>
+                                        <div className="text-[9px] text-crypto-muted mt-0.5">Sized for {tab} budget</div>
+                                    </div>
+                                </div>
+                            );
+                        })()
+                    )}
+
+                    {/* AI Reasoning */}
+                    <div className="bg-crypto-bg/50 border border-crypto-border/50 rounded-xl p-3 text-xs text-crypto-muted leading-relaxed">
+                        <span className="font-semibold text-crypto-heading mr-1">AI Analysis:</span>
+                        {scanResult.reasoning}
+                    </div>
+
+                    {/* Retry / Relevance Note if present */}
+                    {scanResult.signal?.retryNote && (
+                        <p className="mt-2 text-[11px] text-cyan-400/90 flex items-center gap-1.5 font-medium">
+                            <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            {scanResult.signal.retryNote}
+                        </p>
+                    )}
+
+                    {/* Action Button: 1-Click Execution */}
+                    {scanResult.action !== 'NO_TRADE' && scanResult.action !== 'ERROR' && (
+                        <div className="mt-3.5 flex items-center gap-3 flex-wrap">
+                            <button
+                                onClick={() => {
+                                    const toExec = (scanResult.isReversed && scanResult.reversedSignal) ? scanResult.reversedSignal : (scanResult.saved || scanResult.signal);
+                                    setTradeSignal(toExec);
+                                }}
+                                className="px-4 py-2 bg-gradient-to-r from-crypto-primary to-indigo-600 hover:from-crypto-primary/90 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-md shadow-crypto-primary/20 transition-all cursor-pointer flex items-center gap-2"
+                            >
+                                <span>⚡</span>
+                                <span>Review & Execute Trade ({tab.toUpperCase()})</span>
+                            </button>
+
+                            <button
+                                onClick={() => navigate('/signals')}
+                                className="px-3 py-2 text-xs font-medium text-crypto-muted hover:text-crypto-heading bg-crypto-bg border border-crypto-border rounded-xl transition-colors cursor-pointer"
+                            >
+                                View All Signals →
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* Panel */}
             <div className="px-5 py-5">
                 {/* Toggle feedback banner */}
@@ -522,8 +856,21 @@ const AutomationSettings = () => {
                     onToggleReverse={handleToggleReverse}
                     toggling={toggling}
                     reverseToggling={reverseToggling}
+                    onAnalyzeNow={handleAnalyzeNow}
+                    analyzing={analyzing}
                 />
             </div>
+
+            {/* Trade Confirmation Dialog */}
+            <TradeConfirmDialog
+                open={!!tradeSignal}
+                signal={tradeSignal}
+                onClose={() => setTradeSignal(null)}
+                onSuccess={() => {
+                    setTradeSignal(null);
+                    navigate('/positions');
+                }}
+            />
         </div>
     );
 };
