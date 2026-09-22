@@ -36,7 +36,7 @@ router.post('/keys', async (req, res) => {
         try {
             await ExchangeService.testCredentials(apiKey, apiSecret);
         } catch (testErr) {
-            return res.status(400).json({ error: 'Invalid API Keys. Exchange rejected them.' });
+            return res.status(400).json({ error: testErr.message || 'Invalid API Keys. Exchange rejected them.' });
         }
 
         const encKey = encryptData(apiKey);

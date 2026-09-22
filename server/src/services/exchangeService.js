@@ -96,7 +96,15 @@ class ExchangeService {
             });
             return response.data.success;
         } catch (error) {
-            throw new Error(error.response?.data?.error?.message || 'Invalid API credentials');
+            const errObj = error.response?.data?.error;
+            let msg = errObj?.message || errObj?.desc;
+            if (!msg && errObj?.code === 'ip_not_whitelisted_for_api_key') {
+                const clientIp = errObj?.context?.client_ip || '';
+                msg = `IP not whitelisted on Delta (current IP: ${clientIp}). Please add this IP to your Delta API key settings or disable IP restriction.`;
+            } else if (!msg) {
+                msg = errObj?.code || error.message || 'Invalid API credentials';
+            }
+            throw new Error(msg);
         }
     }
 
