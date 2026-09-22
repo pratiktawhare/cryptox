@@ -233,6 +233,31 @@ class AutomationEngine {
             return;
         }
 
+        // ── Open position guard ───────────────────────────────────────────────
+        // If there's already an open BotTrade on this symbol + same direction,
+        // skip this cycle to prevent pyramiding into the same position.
+        // (Opposite direction: handled by PaperTradingEngine — it closes the old one first.)
+        try {
+            const BotTrade = require('../../models/BotTrade');
+            const signalDirection = signal.action === 'BUY' ? 'long' : 'short';
+            const openSameDir = await BotTrade.findOne({
+                mode,
+                symbol: signal.symbol?.toUpperCase(),
+                direction: signalDirection,
+                result: 'open',
+            });
+            if (openSameDir) {
+                const reason = `Already have an open ${signalDirection.toUpperCase()} position on ${signal.symbol} — skipping duplicate entry`;
+                console.log(`[AutomationEngine] ⏭️  ${mode} ${reason}`);
+                await AutomationLog.create({ mode, date, cycleAction: 'NO_TRADE', symbol: signal.symbol, confidence: signal.confidence, notes: reason });
+                this._emit('automation_cycle', { mode, action: 'NO_TRADE', symbol: signal.symbol, confidence: signal.confidence, nextCycleAt: this._nextCycleAt[mode] });
+                return;
+            }
+        } catch (guardErr) {
+            console.warn(`[AutomationEngine] Open-position guard check failed:`, guardErr.message);
+        }
+
+
         // ── Reverse Engineering Mode ──────────────────────────────────────────
         // Flips BUY→SELL (and vice-versa) and swaps SL↔TP at execution time.
         // The AI signal stored in DB is UNCHANGED — only execution is mirrored.

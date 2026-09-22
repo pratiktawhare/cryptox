@@ -184,7 +184,25 @@ class PaperTradingEngine {
             return { order, tradeHistory: history, wallet };
         }
 
-        // ── Net position mode: check if same symbol+side position already exists ──
+        // ── Net position mode ────────────────────────────────────────────────
+        // 1. Close any OPPOSITE side position first (exchange-style net position mode)
+        const oppositeSide = params.side === 'buy' ? 'sell' : 'buy';
+        const oppositePos = await PaperPosition.findOne({
+            userId,
+            symbol: params.symbol.toUpperCase(),
+            side: oppositeSide,
+            status: 'open',
+        });
+        if (oppositePos) {
+            console.log(`[PaperEngine] 🔄 New ${params.side.toUpperCase()} signal on ${params.symbol} — closing opposite ${oppositeSide.toUpperCase()} position first (net-position mode)`);
+            try {
+                await this._closePosition(oppositePos, fillPrice, 'closed_manual', io || this.io);
+            } catch (closeErr) {
+                console.error(`[PaperEngine] Failed to close opposite position before opening new one:`, closeErr.message);
+            }
+        }
+
+        // 2. Check if same symbol+side position already exists → MERGE
         const existingPos = await PaperPosition.findOne({
             userId,
             symbol: params.symbol.toUpperCase(),

@@ -49,6 +49,9 @@ class SignalEngine {
         this._lastSignalTime = new Map(); // symbol → timestamp
         this._cycleCount = 0;
         this._stats = { processed: 0, called: 0, saved: 0, errors: 0 };
+        // Diversity tracker: remembers last N symbols picked to prevent same coin repeat
+        this._recentlyPickedSymbols = []; // circular buffer, max 6 entries
+        this._DIVERSITY_LOOKBACK = 6;     // last 6 cycles = ~3 hours at 30-min interval
     }
 
     // ─── Lifecycle ─────────────────────────────────────────────────────────────
@@ -320,6 +323,24 @@ class SignalEngine {
         return true;
     }
 
+    /**
+     * Track a symbol as recently picked for diversity enforcement.
+     * Keeps a circular buffer of the last N symbols so the same coin
+     * doesn't get prioritized every cycle.
+     */
+    _trackPickedSymbol(symbol) {
+        if (!symbol) return;
+        // Remove any existing entry for this symbol (dedup)
+        this._recentlyPickedSymbols = this._recentlyPickedSymbols.filter(s => s !== symbol);
+        // Add to front
+        this._recentlyPickedSymbols.unshift(symbol);
+        // Cap to lookback window
+        if (this._recentlyPickedSymbols.length > this._DIVERSITY_LOOKBACK) {
+            this._recentlyPickedSymbols = this._recentlyPickedSymbols.slice(0, this._DIVERSITY_LOOKBACK);
+        }
+        console.log(`[SignalEngine] 📋 Recently picked: [${this._recentlyPickedSymbols.join(', ')}]`);
+    }
+
     // ─── Signal persistence ────────────────────────────────────────────────────
 
     async _saveSignal(signal, mtf, primary, walletContext = {}) {
@@ -473,6 +494,16 @@ class SignalEngine {
                 prioritizedCoins = [...affordableCoins].sort(() => Math.random() - 0.5);
             }
 
+            // ── Diversity enforcement: push recently-picked symbols to the back ──
+            // This prevents the same cheap coin (e.g. TRUMPUSD) from dominating every cycle.
+            if (this._recentlyPickedSymbols.length > 0) {
+                const recentSet = new Set(this._recentlyPickedSymbols);
+                const freshCoins = prioritizedCoins.filter(s => !recentSet.has(s));
+                const stalledCoins = prioritizedCoins.filter(s => recentSet.has(s));
+                prioritizedCoins = [...freshCoins, ...stalledCoins];
+                console.log(`[On-Demand] 🔁 Diversity filter: moved ${stalledCoins.length} recently-picked coins to back (${stalledCoins.join(', ')}). Fresh candidates: ${freshCoins.length}`);
+            }
+
             let bestCandidateMatch = null;
             let topBiasCandidate = null;
             let llmCallsCount = 0;
@@ -621,6 +652,7 @@ class SignalEngine {
                                 const saved = await this._saveSignal(signal, candidate.mtf, candidate.mtf['5m'] || candidate.mtf['15m'], walletContext);
                                 console.log(`[On-Demand] Perfect match found: ${candidate.symbol} (Action: ${signal.action}, Confidence: ${signal.confidence}%, Qty: ${signal.quantity})`);
                                 this._lastSignalTime.set(candidate.symbol, Date.now());
+                                this._trackPickedSymbol(candidate.symbol);
                                 return { signal, saved, mtf: candidate.mtf, avgVolumeUsdt: candidate.mtf['5m']?.volumeContext?.avgVolumeUsdt || null };
                             } else {
                                 // Score relevance across candidates to pick the best relative opportunity
@@ -655,6 +687,7 @@ class SignalEngine {
                 console.log(`[On-Demand] 🎯 Returning most relevant setup found: ${candidate.symbol} (${signal.action} ${signal.confidence}%)`);
                 signal.retryNote = `Selected as the most relevant setup among ${llmCallsCount} scanned coins (Confidence: ${signal.confidence}%).`;
                 this._lastSignalTime.set(candidate.symbol, Date.now());
+                this._trackPickedSymbol(candidate.symbol);
                 return { signal, saved, mtf, avgVolumeUsdt: primary?.volumeContext?.avgVolumeUsdt || null };
             }
 
@@ -701,6 +734,7 @@ class SignalEngine {
                     const saved = await this._saveSignal(finalSignal, mtf, primary, walletContext);
                     console.log(`[On-Demand] 🎯 Returning synthesized top trend setup for ${topBiasCandidate.symbol}`);
                     this._lastSignalTime.set(topBiasCandidate.symbol, Date.now());
+                    this._trackPickedSymbol(topBiasCandidate.symbol);
                     return { signal: finalSignal, saved, mtf, avgVolumeUsdt: primary?.volumeContext?.avgVolumeUsdt || null };
                 }
             }
