@@ -553,21 +553,40 @@ export default function BotAuditTabs({
                         </div>
                     ) : (
                         events.map((ev, idx) => {
-                            const levelColor = {
-                                error: 'text-red-400 bg-red-500/10 border-red-500/20',
-                                warn:  'text-amber-400 bg-amber-500/10 border-amber-500/20',
-                                info:  'text-crypto-heading bg-crypto-bg border-crypto-border/40',
-                            }[ev.level] || 'text-crypto-muted bg-crypto-bg border-crypto-border/40';
+                            const eventType = ev.type || ev.eventType;
+                            const severity = ev.severity || ev.level;
+                            const isGuardSafe = eventType === 'POSITION_GUARD_SAFE';
+                            const isGuardDrop = eventType === 'POSITION_GUARD_DROP' || eventType === 'SMART_LOSS_GUARD';
+
+                            let levelColor = 'text-crypto-heading bg-crypto-bg border-crypto-border/40';
+                            if (isGuardSafe) {
+                                levelColor = 'text-emerald-300 bg-emerald-500/5 border-emerald-500/25';
+                            } else if (isGuardDrop) {
+                                levelColor = 'text-rose-300 bg-rose-500/10 border-rose-500/35';
+                            } else {
+                                levelColor = {
+                                    error:    'text-red-400 bg-red-500/10 border-red-500/20',
+                                    critical: 'text-rose-400 bg-rose-500/15 border-rose-500/30',
+                                    warn:     'text-amber-400 bg-amber-500/10 border-amber-500/20',
+                                    info:     'text-crypto-heading bg-crypto-bg border-crypto-border/40',
+                                }[severity] || 'text-crypto-muted bg-crypto-bg border-crypto-border/40';
+                            }
 
                             return (
-                                <div key={ev._id || idx} className={`p-2 rounded-lg border flex items-start gap-2.5 ${levelColor}`}>
-                                    <span className="text-[10px] text-crypto-muted opacity-80 whitespace-nowrap pt-0.5">
+                                <div key={ev._id || idx} className={`p-2.5 rounded-xl border flex items-start gap-2.5 transition-all ${levelColor}`}>
+                                    <span className="text-[10px] text-crypto-muted opacity-80 whitespace-nowrap pt-0.5 font-mono">
                                         {new Date(ev.timestamp || ev.createdAt).toLocaleTimeString()}
                                     </span>
-                                    <span className="font-bold text-[10px] uppercase px-1.5 py-0.5 rounded bg-crypto-card/60">
-                                        {ev.eventType}
+                                    <span className={`font-black text-[9px] uppercase px-2 py-0.5 rounded-md border tracking-wider whitespace-nowrap ${
+                                        isGuardSafe
+                                            ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                                            : isGuardDrop
+                                            ? 'bg-rose-500/20 text-rose-400 border-rose-500/40 animate-pulse'
+                                            : 'bg-crypto-card/60 text-crypto-muted border-crypto-border/60'
+                                    }`}>
+                                        {isGuardSafe ? '🛡️ SAFE' : isGuardDrop ? '🚨 DROP OFF' : eventType}
                                     </span>
-                                    <span className="text-xs flex-1 break-words font-sans">
+                                    <span className="text-xs flex-1 break-words font-sans leading-relaxed">
                                         {ev.message}
                                     </span>
                                 </div>

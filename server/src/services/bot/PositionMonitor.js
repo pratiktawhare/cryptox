@@ -537,7 +537,7 @@ class PositionMonitor {
 
     async _logEvent(userId, mode, type, severity, message, metadata = {}) {
         try {
-            await BotEvent.create({
+            const eventDoc = await BotEvent.create({
                 userId,
                 mode,
                 type,
@@ -545,6 +545,18 @@ class PositionMonitor {
                 message,
                 metadata,
                 timestamp: new Date(),
+            });
+
+            this._emit(userId, 'bot_event', {
+                _id: eventDoc._id,
+                mode,
+                type,
+                eventType: type,
+                severity,
+                level: severity,
+                message,
+                metadata,
+                timestamp: eventDoc.timestamp,
             });
         } catch (err) {
             console.error(`[PositionMonitor] Failed to log BotEvent:`, err.message);

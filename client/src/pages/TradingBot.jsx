@@ -156,11 +156,15 @@ export default function TradingBot() {
         const handleBotEvent = (payload) => {
             if (payload?.mode === mode || payload?.mode === 'all') {
                 setEvents(prev => [{
-                    eventType: payload.eventType,
+                    _id: payload._id || `ev_${Date.now()}_${Math.random()}`,
+                    type: payload.type || payload.eventType,
+                    eventType: payload.eventType || payload.type,
                     message: payload.message,
-                    level: payload.level || 'info',
-                    timestamp: new Date().toISOString(),
-                }, ...prev.slice(0, 49)]);
+                    severity: payload.severity || payload.level || 'info',
+                    level: payload.level || payload.severity || 'info',
+                    timestamp: payload.timestamp || new Date().toISOString(),
+                    metadata: payload.metadata || {},
+                }, ...prev.filter(e => e._id !== payload._id)].slice(0, 50));
             }
         };
 
