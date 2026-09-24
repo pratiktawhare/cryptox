@@ -160,6 +160,16 @@ const tradingConfigSchema = new mongoose.Schema(
             default: false,
         },
 
+        // ── Smart Loss Guard (Auto-Exit on Trend Reversal & Drawdown) ────────
+        // When true: during every scan cycle, the bot scans open positions.
+        // If an open position has ROI < -20% AND current market trend has reversed
+        // against the trade direction (signalling big loss/opposite rally),
+        // it immediately places a limit close/sell order at current market price.
+        smartLossGuard: {
+            type: Boolean,
+            default: false,
+        },
+
         // ── State ───────────────────────────────────────────────────────────
         // Whether this mode is currently enabled (persisted across restarts)
         enabled: {

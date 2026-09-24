@@ -204,10 +204,11 @@ export default function BotAuditTabs({
                                     const isWin = (t.netPnl || 0) >= 0;
                                     const isLong = t.direction === 'long';
                                     const exitBadge = {
-                                        take_profit:  'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-                                        stop_loss:    'bg-red-500/10 text-red-400 border-red-500/20',
-                                        manual_close: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-                                        open:         'bg-amber-500/10 text-amber-400 border-amber-500/20',
+                                        take_profit:      'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+                                        stop_loss:        'bg-red-500/10 text-red-400 border-red-500/20',
+                                        smart_loss_guard: 'bg-rose-500/15 text-rose-400 border-rose-500/30',
+                                        manual_close:     'bg-blue-500/10 text-blue-400 border-blue-500/20',
+                                        open:             'bg-amber-500/10 text-amber-400 border-amber-500/20',
                                     }[t.exitReason || t.result] || 'bg-crypto-bg text-crypto-muted border-crypto-border';
 
                                     return (
@@ -253,7 +254,7 @@ export default function BotAuditTabs({
                                             </td>
                                             <td className="py-3 whitespace-nowrap">
                                                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${exitBadge}`}>
-                                                    {(t.exitReason || t.result || '').replace('_', ' ')}
+                                                    {t.exitReason === 'smart_loss_guard' ? '🛡️ loss guard' : (t.exitReason || t.result || '').replace(/_/g, ' ')}
                                                 </span>
                                             </td>
                                         </tr>
@@ -759,9 +760,11 @@ export default function BotAuditTabs({
                                                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                                                             tr.result === 'win'
                                                                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                                                                : 'bg-red-500/10 text-red-400 border-red-500/20'
+                                                                : tr.exitReason === 'smart_loss_guard'
+                                                                    ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                                                                    : 'bg-red-500/10 text-red-400 border-red-500/20'
                                                         }`}>
-                                                            {tr.exitReason?.replace('_', ' ')}
+                                                            {tr.exitReason === 'smart_loss_guard' ? '🛡️ loss guard' : tr.exitReason?.replace(/_/g, ' ')}
                                                         </span>
                                                     </td>
                                                 </tr>

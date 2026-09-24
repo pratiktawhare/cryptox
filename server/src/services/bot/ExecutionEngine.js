@@ -664,7 +664,7 @@ class ExecutionEngine {
                 trade.fees = totalFees;
                 trade.netPnl = netPnl;
                 trade.result = netPnl >= 0 ? 'win' : 'loss';
-                trade.exitReason = 'emergency';
+                trade.exitReason = reason || 'emergency';
                 await trade.save();
 
                 await this._logEvent(userId, 'paper', 'EMERGENCY_STOP', 'critical',
@@ -702,7 +702,7 @@ class ExecutionEngine {
                 trade.exitTime = new Date();
                 trade.durationSeconds = Math.round((trade.exitTime - trade.entryTime) / 1000);
                 trade.result = 'cancelled';
-                trade.exitReason = 'emergency';
+                trade.exitReason = reason || 'emergency';
                 await trade.save();
 
                 await this._logEvent(userId, 'live', 'EMERGENCY_STOP', 'critical',

@@ -254,7 +254,7 @@ class PositionMonitor {
         await PaperPosition.updateMany(
             { userId: trade.userId, symbol: trade.symbol, status: 'open' },
             {
-                status: exitReason === 'take_profit' ? 'closed_tp' : 'closed_sl',
+                status: exitReason === 'take_profit' ? 'closed_tp' : (exitReason === 'smart_loss_guard' ? 'closed_smart_guard' : 'closed_sl'),
                 closePrice: exitPrice,
                 realisedPnl: netPnl,
                 closedAt: new Date(),
@@ -280,7 +280,7 @@ class PositionMonitor {
         await this.recordTradeResult(trade.userId, 'paper', netPnl, config);
 
         // 5. Log BotEvents
-        const eventType = exitReason === 'take_profit' ? 'POSITION_CLOSED_TP' : 'POSITION_CLOSED_SL';
+        const eventType = exitReason === 'take_profit' ? 'POSITION_CLOSED_TP' : (exitReason === 'smart_loss_guard' ? 'POSITION_CLOSED_SMART_GUARD' : 'POSITION_CLOSED_SL');
         await this._logEvent(
             trade.userId,
             'paper',
@@ -291,7 +291,7 @@ class PositionMonitor {
         );
 
         // 6. Notify user
-        this._notifyOutcome(trade.userId, trade.symbol, trade.direction, isWin, exitPrice, netPnl);
+        this._notifyOutcome(trade.userId, trade.symbol, trade.direction, isWin, exitPrice, netPnl, exitReason);
 
         // 7. Emit Socket.IO events
         this._emit(trade.userId, 'bot_trade_closed', {
@@ -306,6 +306,96 @@ class PositionMonitor {
         });
 
         console.log(`[PositionMonitor] 📄 [Paper] Trade ${trade.symbol} closed via ${exitReason} @ $${exitPrice} | Net PnL: $${netPnl.toFixed(4)}`);
+    }
+
+    /**
+     * Public method to close a trade immediately with a custom exitReason
+     * (e.g. 'smart_loss_guard'). Supports both Paper and Live modes.
+     *
+     * @param {object} trade       - BotTrade document
+     * @param {number} exitPrice   - Market / limit price to execute close
+     * @param {string} exitReason  - e.g. 'smart_loss_guard'
+     * @param {object} [metadata]  - Additional telemetry details
+     */
+    async closeTradeWithReason(trade, exitPrice, exitReason = 'smart_loss_guard', metadata = {}) {
+        const spec = productCatalog.getBySymbol(trade.symbol);
+        const contractValue = parseFloat(spec?.contract_value || trade.contractValue || 1);
+        const isLong = trade.direction === 'long';
+
+        if (trade.mode === 'paper') {
+            await this._closePaperTrade(trade, exitPrice, exitReason, contractValue, isLong);
+        } else if (trade.mode === 'live') {
+            const client = await this._buildDeltaClient(trade.userId);
+            if (!client) {
+                throw new Error(`No Delta client available to close live trade for user ${trade.userId}`);
+            }
+
+            // 1. Cancel open orders for symbol on Delta (prevents pending bracket orders from triggering)
+            try {
+                await client.cancelAllOrders(trade.symbol);
+            } catch (cancelErr) {
+                console.warn(`[PositionMonitor] Cancel orders warning for ${trade.symbol}:`, cancelErr.message);
+            }
+
+            // 2. Place limit close order at exitPrice, falling back to market order if needed
+            const side = isLong ? 'buy' : 'sell'; // opposite of position side
+            try {
+                await client.closePosition(trade.symbol, trade.quantity, side, exitPrice);
+            } catch (ordErr) {
+                console.warn(`[PositionMonitor] Limit close failed (${ordErr.message}), falling back to market close:`, ordErr.message);
+                await client.closePosition(trade.symbol, trade.quantity, side);
+            }
+
+            // 3. Calculate PnL
+            const priceDiff = isLong ? (exitPrice - trade.entryPrice) : (trade.entryPrice - exitPrice);
+            const grossPnl = priceDiff * trade.quantity * contractValue;
+            const exitFee = (trade.entryPrice * trade.quantity * contractValue) * 0.0005;
+            const totalFees = (trade.fees || 0) + exitFee;
+            const netPnl = grossPnl - totalFees;
+            const isWin = netPnl >= 0;
+
+            // 4. Update BotTrade
+            trade.exitPrice = exitPrice;
+            trade.exitTime = new Date();
+            trade.durationSeconds = Math.round((trade.exitTime - trade.entryTime) / 1000);
+            trade.grossPnl = grossPnl;
+            trade.fees = totalFees;
+            trade.netPnl = netPnl;
+            trade.result = isWin ? 'win' : 'loss';
+            trade.exitReason = exitReason;
+            await trade.save();
+
+            // 5. Update Risk Stats & Cooldown
+            const config = await TradingConfig.findOne({ userId: trade.userId, mode: 'live' });
+            await this.recordTradeResult(trade.userId, 'live', netPnl, config);
+
+            // 6. Log BotEvent
+            const eventType = exitReason === 'smart_loss_guard' ? 'POSITION_CLOSED_SMART_GUARD' : (isWin ? 'POSITION_CLOSED_TP' : 'POSITION_CLOSED_SL');
+            await this._logEvent(
+                trade.userId,
+                'live',
+                eventType,
+                'warn',
+                `[Live] ${trade.symbol} closed via ${exitReason.toUpperCase()} @ $${exitPrice} | Net PnL: ${netPnl >= 0 ? '+' : ''}$${netPnl.toFixed(4)}`,
+                { tradeId: trade._id, symbol: trade.symbol, exitPrice, netPnl, grossPnl, fees: totalFees, exitReason, ...metadata }
+            );
+
+            // 7. Notify user
+            this._notifyOutcome(trade.userId, trade.symbol, trade.direction, isWin, exitPrice, netPnl, exitReason);
+
+            // 8. Emit Socket.IO events
+            this._emit(trade.userId, 'bot_trade_closed', {
+                trade: trade.toObject(),
+                mode: 'live',
+            });
+            this._emit(trade.userId, 'bot_position_updated', {
+                symbol: trade.symbol,
+                status: 'closed',
+                mode: 'live',
+            });
+
+            console.log(`[PositionMonitor] 💰 [Live] Trade ${trade.symbol} closed via ${exitReason} @ $${exitPrice} | Net PnL: $${netPnl.toFixed(4)}`);
+        }
     }
 
     // ─── Live Trade Monitoring ─────────────────────────────────────────────────
@@ -470,12 +560,17 @@ class PositionMonitor {
         }
     }
 
-    _notifyOutcome(userId, symbol, direction, isWin, exitPrice, netPnl) {
+    _notifyOutcome(userId, symbol, direction, isWin, exitPrice, netPnl, exitReason = null) {
         try {
             const sym = (symbol || '').replace('USD', '/USD');
             const pnlStr = `${netPnl >= 0 ? '+' : ''}$${Number(netPnl).toFixed(2)}`;
-            const title = isWin ? `🎯 Target Hit: ${sym}` : `🛑 Stop Loss: ${sym}`;
-            const message = `${isWin ? 'Profit' : 'Loss'}: ${pnlStr} on ${direction.toUpperCase()} @ $${Number(exitPrice).toFixed(4)}`;
+            let title = isWin ? `🎯 Target Hit: ${sym}` : `🛑 Stop Loss: ${sym}`;
+            let message = `${isWin ? 'Profit' : 'Loss'}: ${pnlStr} on ${direction.toUpperCase()} @ $${Number(exitPrice).toFixed(4)}`;
+
+            if (exitReason === 'smart_loss_guard') {
+                title = `🛡️ Smart Loss Guard: ${sym}`;
+                message = `Auto-exited early on trend reversal: ${pnlStr} on ${direction.toUpperCase()} @ $${Number(exitPrice).toFixed(4)}`;
+            }
 
             if (notificationService?._createAndEmit) {
                 notificationService._createAndEmit(userId, {
@@ -483,7 +578,7 @@ class PositionMonitor {
                     title,
                     message,
                     priority: 'high',
-                    sound: isWin ? 'target_hit' : 'stoploss_hit',
+                    sound: exitReason === 'smart_loss_guard' ? 'stoploss_hit' : (isWin ? 'target_hit' : 'stoploss_hit'),
                 }).catch(() => {});
             }
         } catch (e) {

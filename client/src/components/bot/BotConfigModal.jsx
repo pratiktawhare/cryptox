@@ -20,6 +20,7 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
     const [aiEnabled, setAiEnabled] = useState(config.aiEnabled ?? true);
     const [aiIntervalSeconds, setAiIntervalSeconds] = useState(config.aiIntervalSeconds ?? 1800);
     const [walletParts, setWalletParts] = useState(config.walletParts ?? 1);
+    const [smartGuard, setSmartGuard] = useState(config.smartLossGuard ?? false);
 
     const [saving, setSaving] = useState(false);
     const [errorMsg, setErrorMsg] = useState('');
@@ -41,6 +42,7 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
             setAiEnabled(config.aiEnabled ?? true);
             setAiIntervalSeconds(config.aiIntervalSeconds ?? 1800);
             setWalletParts(config.walletParts ?? 1);
+            setSmartGuard(config.smartLossGuard ?? false);
         }
     }, [config, mode]);
 
@@ -74,6 +76,7 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                 aiEnabled: Boolean(aiEnabled),
                 aiIntervalSeconds: Number(aiIntervalSeconds),
                 walletParts: Number(walletParts),
+                smartLossGuard: Boolean(smartGuard),
             });
             onClose();
         } catch (err) {
@@ -99,6 +102,7 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
         setAiEnabled(true);
         setAiIntervalSeconds(1800);
         setWalletParts(1);
+        setSmartGuard(false);
     };
 
     const handleResetPaperWallet = async () => {
@@ -676,6 +680,56 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                                 </p>
                                 <p className="text-[10px] text-crypto-muted mt-1.5">
                                     Toggle this mode using the <strong className="text-crypto-heading">🔄 Fade Rally</strong> button in the header bar.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Section 5: Smart Loss Guard */}
+                    <div className="space-y-3 pt-4 border-t border-crypto-border/60">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-xs font-bold uppercase tracking-wider text-crypto-primary">
+                                5. Smart Loss Guard
+                            </h3>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={smartGuard}
+                                    onChange={(e) => setSmartGuard(e.target.checked)}
+                                    className="sr-only peer"
+                                />
+                                <div className="w-11 h-6 bg-crypto-border peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-rose-500"></div>
+                            </label>
+                        </div>
+                        <div className={`p-3.5 rounded-2xl border flex items-start gap-3 transition-colors ${
+                            smartGuard
+                                ? 'bg-rose-500/10 border-rose-500/25'
+                                : 'bg-crypto-bg border-crypto-border/80'
+                        }`}>
+                            <div className={`mt-0.5 w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                                smartGuard ? 'bg-rose-500/20 text-rose-400' : 'bg-crypto-border/40 text-crypto-muted'
+                            }`}>
+                                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                                </svg>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <span className={`text-xs font-black ${
+                                        smartGuard ? 'text-rose-400' : 'text-crypto-heading'
+                                    }`}>
+                                        {smartGuard ? '🛡️ Smart Loss Guard — ACTIVE' : 'Smart Loss Guard — Disabled'}
+                                    </span>
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                                        smartGuard
+                                            ? 'bg-rose-500/20 text-rose-300'
+                                            : 'bg-crypto-border/30 text-crypto-muted'
+                                    }`}>
+                                        {smartGuard ? 'Auto-Rescue ON' : 'Standard SL Only'}
+                                    </span>
+                                </div>
+                                <p className="text-[11px] text-crypto-muted leading-relaxed">
+                                    Scans all open positions during every scan cycle. If an open trade experiences an unrealised loss &gt; 20% on margin (ROI &lt; -20%) and market technicals confirm a sharp trend reversal against the trade with negative momentum, the bot immediately places a limit sell/close order at the current market price to protect capital.
                                 </p>
                             </div>
                         </div>

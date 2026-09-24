@@ -173,16 +173,22 @@ class DeltaOrderClient {
     }
 
     /**
-     * Close a position by placing a market order in the opposite direction.
+     * Close a position by placing an order in the opposite direction.
+     * If price is provided, places a reduce-only limit order; otherwise places a market order.
      */
-    async closePosition(symbol, size, side) {
+    async closePosition(symbol, size, side, price = null) {
         const closeSide = side === 'buy' ? 'sell' : 'buy';
-        return this.placeOrder({
+        const params = {
             symbol,
             side: closeSide,
             size,
-            orderType: 'market_order',
-        });
+            orderType: price ? 'limit_order' : 'market_order',
+            reduceOnly: true,
+        };
+        if (price) {
+            params.price = price;
+        }
+        return this.placeOrder(params);
     }
 
     /**

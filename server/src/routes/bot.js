@@ -246,7 +246,7 @@ router.put('/config/:mode', async (req, res) => {
         'minSignalScore', 'slAtrMultiplier', 'tpSafetyMultiplier',
         'maxLeverage', 'maxOpenPositions', 'scanIntervalMinutes',
         'aiEnabled', 'aiRequired', 'aiIntervalSeconds', 'enabled',
-        'targetRoiPct', 'reverseMode', 'walletParts',
+        'targetRoiPct', 'reverseMode', 'walletParts', 'smartLossGuard',
     ];
 
     const updates = {};
@@ -297,6 +297,30 @@ router.post('/toggle-reverse', async (req, res) => {
         );
 
         res.json({ success: true, mode, reverseMode: config.reverseMode, config });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── POST /api/bot/toggle-smart-guard ───────────────────────────────────────────
+router.post('/toggle-smart-guard', async (req, res) => {
+    const { mode, smartLossGuard } = req.body;
+    if (!['paper', 'live'].includes(mode)) {
+        return res.status(400).json({ error: 'mode must be "paper" or "live"' });
+    }
+
+    try {
+        const userId = req.user.id;
+        const current = await TradingConfig.findOne({ userId, mode });
+        const nextVal = typeof smartLossGuard === 'boolean' ? smartLossGuard : !current?.smartLossGuard;
+
+        const config = await TradingConfig.findOneAndUpdate(
+            { userId, mode },
+            { $set: { smartLossGuard: nextVal } },
+            { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
+        );
+
+        res.json({ success: true, mode, smartLossGuard: config.smartLossGuard, config });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

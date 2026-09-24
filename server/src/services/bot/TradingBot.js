@@ -35,6 +35,7 @@ const executionEngine = require('./ExecutionEngine');
 const positionMonitor = require('./PositionMonitor');
 const entryOrderWatcher = require('./EntryOrderWatcher');
 const aiRegimeAnalyzer = require('./AiRegimeAnalyzer');
+const productCatalog = require('../ProductCatalog');
 
 class TradingBot {
     /**
@@ -255,6 +256,11 @@ class TradingBot {
 
     async _scanForUser(config) {
         const userId = config.userId;
+
+        // ── 0. Smart Loss Guard Scan (Auto-Rescue if ROI < -20% & Trend Reversed) ──
+        if (config.smartLossGuard === true) {
+            await this._scanOpenPositionsForRescue(userId, config);
+        }
 
         // ── 1. Fetch available wallet balance ──────────────────────────────────
         let availableBalance = 0;
@@ -746,6 +752,144 @@ class TradingBot {
             });
         } catch (err) {
             console.error('[TradingBot] Failed to log BotEvent:', err.message);
+        }
+    }
+
+    /**
+     * Scans currently open positions for the user to detect severe opposite trend/rally
+     * with high drawdown (ROI < -20%). If all conditions are met, immediately closes
+     * the position at current market price (Smart Loss Guard).
+     *
+     * Triple-Lock Conditions:
+     * 1. Current unrealised ROI <= -20% on position margin.
+     * 2. Market trend has reversed against trade direction (e.g. LONG into TRENDING_DOWN, SHORT into TRENDING_UP).
+     * 3. 1m momentum / price action actively confirms opposite rally (negative for LONG, positive for SHORT).
+     */
+    async _scanOpenPositionsForRescue(userId, config) {
+        try {
+            const openTrades = await BotTrade.find({
+                userId,
+                mode: this.mode,
+                result: 'open',
+            });
+
+            if (!openTrades || openTrades.length === 0) return 0;
+
+            console.log(`[TradingBot] 🛡️ Smart Loss Guard active: checking ${openTrades.length} open position(s) for ${this.mode}...`);
+            let rescuedCount = 0;
+
+            for (const trade of openTrades) {
+                try {
+                    const symbol = trade.symbol;
+
+                    // 1. Get live price
+                    let currentPrice = null;
+                    if (this.wsManager?.getPrice) {
+                        const p = this.wsManager.getPrice(symbol);
+                        if (p && p > 0) currentPrice = p;
+                    }
+                    if (!currentPrice && this.wsManager?.getTicker) {
+                        const ticker = this.wsManager.getTicker(symbol);
+                        if (ticker?.mark_price) currentPrice = parseFloat(ticker.mark_price);
+                        else if (ticker?.close) currentPrice = parseFloat(ticker.close);
+                    }
+                    if (!currentPrice) {
+                        const lastCandle = candleStore.getLastCandle(symbol, '1m') || candleStore.getLastCandle(symbol, '5m');
+                        if (lastCandle?.close) currentPrice = lastCandle.close;
+                    }
+
+                    if (!currentPrice || currentPrice <= 0) {
+                        continue; // cannot evaluate without live price
+                    }
+
+                    // 2. Calculate ROI on margin
+                    const spec = this.productCatalog?.getBySymbol(symbol) || productCatalog.getBySymbol(symbol);
+                    const contractValue = parseFloat(spec?.contract_value || trade.contractValue || 1);
+                    const isLong = trade.direction === 'long';
+                    const priceDiff = isLong ? (currentPrice - trade.entryPrice) : (trade.entryPrice - currentPrice);
+                    const unrealisedGross = priceDiff * trade.quantity * contractValue;
+                    const roi = trade.margin > 0 ? (unrealisedGross / trade.margin) * 100 : 0;
+
+                    // Condition 1: Loss > 20% on the investment (ROI <= -20%)
+                    if (roi > -20) {
+                        // Position has not reached the -20% drawdown threshold
+                        continue;
+                    }
+
+                    // 3. Technical analysis for Trend Reversal & Opposite Rally
+                    const snapshot = analyzeSymbol(symbol, this.wsManager);
+                    if (!snapshot) {
+                        console.log(`[TradingBot] 🛡️ Smart Loss Guard: ${symbol} has ROI ${roi.toFixed(2)}% <= -20%, but insufficient candle data for reversal check. Keeping position.`);
+                        continue;
+                    }
+
+                    const regimeResult = detectRegime(snapshot);
+                    const currentRegime = regimeResult?.regime;
+                    const m5 = snapshot['5m'];
+                    const m1 = snapshot['1m'];
+
+                    // Condition 2: Trend has gone opposite
+                    // Long reversal: regime is TRENDING_DOWN OR (5m EMA9 < EMA21 AND 5m slope < 0)
+                    // Short reversal: regime is TRENDING_UP OR (5m EMA9 > EMA21 AND 5m slope > 0)
+                    let trendReversed = false;
+                    if (isLong) {
+                        trendReversed = currentRegime === 'TRENDING_DOWN' || (m5.ema9 < m5.ema21 && m5.ema21Slope < 0) || (m5.rsi !== null && m5.rsi < 45);
+                    } else {
+                        trendReversed = currentRegime === 'TRENDING_UP' || (m5.ema9 > m5.ema21 && m5.ema21Slope > 0) || (m5.rsi !== null && m5.rsi > 55);
+                    }
+
+                    // Condition 3: Signalling big loss / opposite rally (1m momentum confirms opposite direction)
+                    // Long: momentum <= 0 or 1m EMA9 < EMA21 (dumping further)
+                    // Short: momentum >= 0 or 1m EMA9 > EMA21 (rallying further against short)
+                    let momentumConfirms = false;
+                    if (isLong) {
+                        momentumConfirms = (m1.momentum ?? 0) <= 0 || (m1.ema9 < m1.ema21);
+                    } else {
+                        momentumConfirms = (m1.momentum ?? 0) >= 0 || (m1.ema9 > m1.ema21);
+                    }
+
+                    if (!trendReversed || !momentumConfirms) {
+                        console.log(`[TradingBot] 🛡️ Smart Loss Guard: ${symbol} ROI=${roi.toFixed(2)}% <= -20%, but trend reversed=${trendReversed}, momentum confirms=${momentumConfirms}. Holding.`);
+                        continue;
+                    }
+
+                    // All 3 conditions met simultaneously!
+                    console.log(`[TradingBot] 🚨 SMART LOSS GUARD TRIGGERED: Closing ${isLong ? 'LONG' : 'SHORT'} ${symbol} @ $${currentPrice}! ROI: ${roi.toFixed(2)}%, Regime: ${currentRegime}, Momentum: ${m1.momentum?.toFixed(2)}%`);
+
+                    await positionMonitor.closeTradeWithReason(
+                        trade,
+                        currentPrice,
+                        'smart_loss_guard',
+                        {
+                            roi,
+                            regime: currentRegime,
+                            momentum: m1.momentum,
+                            reason: `Smart Loss Guard: ROI ${roi.toFixed(2)}% <= -20% with opposite ${currentRegime} rally`,
+                        }
+                    );
+
+                    await this._logEvent(
+                        userId,
+                        'SMART_LOSS_GUARD',
+                        'critical',
+                        `🛡️ Smart Loss Guard exited ${symbol} (${trade.direction.toUpperCase()}) @ $${currentPrice}. ROI: ${roi.toFixed(2)}%, Regime: ${currentRegime}, 1m Momentum: ${m1.momentum?.toFixed(2)}%`,
+                        { tradeId: trade._id, symbol, direction: trade.direction, currentPrice, roi, regime: currentRegime, momentum: m1.momentum }
+                    );
+
+                    rescuedCount++;
+                } catch (posErr) {
+                    console.error(`[TradingBot] Error checking position ${trade.symbol} in Smart Loss Guard:`, posErr.message);
+                }
+            }
+
+            if (rescuedCount > 0) {
+                console.log(`[TradingBot] 🛡️ Smart Loss Guard closed ${rescuedCount} position(s).`);
+            }
+
+            return rescuedCount;
+        } catch (err) {
+            console.error(`[TradingBot] ❌ Error in Smart Loss Guard scan:`, err.message);
+            return 0;
         }
     }
 

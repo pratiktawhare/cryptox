@@ -30,7 +30,7 @@ const paperPositionSchema = new mongoose.Schema({
     liquidationPrice: { type: Number, default: null },
 
     // Outcome
-    status:      { type: String, enum: ['open', 'closed_tp', 'closed_sl', 'closed_manual'], default: 'open' },
+    status:      { type: String, enum: ['open', 'closed_tp', 'closed_sl', 'closed_manual', 'closed_smart_guard'], default: 'open' },
     closePrice:  { type: Number, default: null },
     realisedPnl: { type: Number, default: null },
     closedAt:    { type: Date, default: null },

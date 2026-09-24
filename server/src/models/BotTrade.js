@@ -70,7 +70,7 @@ const botTradeSchema = new mongoose.Schema(
 
         exitReason: {
             type: String,
-            enum: ['take_profit', 'stop_loss', 'manual', 'manual_close', 'emergency', 'timeout', 'entry_timeout', null],
+            enum: ['take_profit', 'stop_loss', 'manual', 'manual_close', 'emergency', 'timeout', 'entry_timeout', 'smart_loss_guard', null],
             default: null,
         },
 

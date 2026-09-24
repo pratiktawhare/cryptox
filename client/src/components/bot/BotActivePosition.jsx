@@ -86,6 +86,11 @@ function SinglePositionCard({ trade, currentPrice, onCloseTrade, navigate }) {
                                 ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%)
                             </span>
                         </div>
+                        {pnlPct <= -20 && (
+                            <div className="text-[10px] font-bold text-rose-400 mt-0.5 flex items-center justify-end gap-1">
+                                <span>🛡️ Drawdown &gt; 20%</span>
+                            </div>
+                        )}
                         <div className={`text-xs font-bold tabular-nums mt-0.5 ${
                             isWin ? 'text-crypto-success' : 'text-crypto-danger'
                         }`}>

@@ -18,6 +18,9 @@ export default function BotHeader({
     reverseMode = false,
     onToggleReverse,
     reverseModeLoading = false,
+    smartLossGuard = false,
+    onToggleSmartGuard,
+    smartLossGuardLoading = false,
 }) {
     const [showEmergencyConfirm, setShowEmergencyConfirm] = useState(false);
 
@@ -171,6 +174,35 @@ export default function BotHeader({
                             <span className="hidden sm:inline">{reverseMode ? '🔄 Fade Rally' : 'Fade Rally'}</span>
                             {reverseMode && (
                                 <span className="hidden md:inline text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/20 text-violet-300 font-black tracking-wider">ON</span>
+                            )}
+                        </button>
+
+                        {/* Smart Loss Guard Toggle */}
+                        <button
+                            type="button"
+                            onClick={onToggleSmartGuard}
+                            disabled={smartLossGuardLoading || actionLoading}
+                            title={smartLossGuard
+                                ? 'Smart Loss Guard ON: Auto-exits position if ROI < -20% and trend reverses against trade. Click to disable.'
+                                : 'Smart Loss Guard OFF: Positions only exit on SL/TP. Click to enable auto-rescue on trend reversal.'}
+                            className={`px-3 py-2.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                                smartLossGuard
+                                    ? 'bg-rose-500/15 border-rose-500/40 text-rose-400 shadow-sm shadow-rose-500/10'
+                                    : 'bg-crypto-bg border-crypto-border text-crypto-muted hover:text-crypto-heading hover:border-rose-500/30'
+                            }`}
+                        >
+                            {smartLossGuardLoading ? (
+                                <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                                </svg>
+                            ) : (
+                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                                </svg>
+                            )}
+                            <span className="hidden sm:inline">{smartLossGuard ? '🛡️ Loss Guard' : 'Loss Guard'}</span>
+                            {smartLossGuard && (
+                                <span className="hidden md:inline text-[10px] px-1.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 font-black tracking-wider">ON</span>
                             )}
                         </button>
 
