@@ -38,10 +38,12 @@ const botTradeSchema = new mongoose.Schema(
         },
 
         // ── Prices ─────────────────────────────────────────────────────────
-        entryPrice: { type: Number, required: true },
-        exitPrice:  { type: Number, default: null },
-        stopLoss:   { type: Number, required: true },
-        takeProfit: { type: Number, required: true },
+        entryPrice:        { type: Number, required: true },
+        exitPrice:         { type: Number, default: null },
+        stopLoss:          { type: Number, required: true },
+        stopLossTrigger:   { type: Number, default: null },
+        takeProfit:        { type: Number, required: true },
+        takeProfitTrigger: { type: Number, default: null },
 
         // ── Position details ────────────────────────────────────────────────
         quantity:      { type: Number, required: true },  // contracts

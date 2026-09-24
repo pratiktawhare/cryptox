@@ -524,31 +524,39 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                         {/* Stop-Loss Distance & Min Reward/Risk */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div>
-                                <div className="flex items-center justify-between mb-1">
-                                    <label className="text-xs font-semibold text-crypto-heading">
-                                        Stop-Loss Distance ({slAtrMultiplier}x ATR)
-                                    </label>
-                                    <span className="text-xs font-bold text-crypto-primary tabular-nums">
-                                        {slAtrMultiplier >= 5.0 ? 'Noise-Immune (Never Hits ★)' : slAtrMultiplier >= 4.0 ? 'Wide (High Win Rate)' : 'Standard'}
-                                    </span>
-                                </div>
-                                <input
-                                    type="range"
-                                    min="2.0"
-                                    max="8.0"
-                                    step="0.5"
-                                    value={slAtrMultiplier}
-                                    onChange={e => setSlAtrMultiplier(parseFloat(e.target.value))}
-                                    className="w-full accent-crypto-primary cursor-pointer"
-                                />
-                                <div className="flex justify-between text-[10px] text-crypto-muted mt-0.5">
-                                    <span>2.0x</span>
-                                    <span className="text-crypto-primary font-bold">5.0x (Noise-Immune ★)</span>
-                                    <span>8.0x (Disaster Only)</span>
-                                </div>
-                                <span className="text-[10px] text-crypto-muted mt-1 block">
-                                    Keeps SL far away so normal market noise never hits it, safely buffered before liquidation.
-                                </span>
+                                {(() => {
+                                    const estTargetPct = Math.max((targetRoiPct / (leverage || 20)) + 0.08, 0.2);
+                                    const estSlPct = (estTargetPct * slAtrMultiplier).toFixed(2);
+                                    return (
+                                        <>
+                                            <div className="flex items-center justify-between mb-1">
+                                                <label className="text-xs font-semibold text-crypto-heading">
+                                                    Stop-Loss Distance ({slAtrMultiplier}x Target)
+                                                </label>
+                                                <span className="text-xs font-bold text-crypto-primary tabular-nums">
+                                                    ~{estSlPct}% SL ({slAtrMultiplier >= 5.0 ? 'Noise-Immune ★' : slAtrMultiplier >= 4.0 ? 'Wide' : 'Tight'})
+                                                </span>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                min="1.0"
+                                                max="8.0"
+                                                step="0.5"
+                                                value={slAtrMultiplier}
+                                                onChange={e => setSlAtrMultiplier(parseFloat(e.target.value))}
+                                                className="w-full accent-crypto-primary cursor-pointer"
+                                            />
+                                            <div className="flex justify-between text-[10px] text-crypto-muted mt-0.5">
+                                                <span>1.0x</span>
+                                                <span className="text-crypto-primary font-bold">4.0x (Recommended)</span>
+                                                <span>8.0x (Wide Safety)</span>
+                                            </div>
+                                            <span className="text-[10px] text-crypto-muted mt-1 block">
+                                                Stop loss is set to {slAtrMultiplier}x your target ({estTargetPct.toFixed(2)}% target × {slAtrMultiplier}x = ~{estSlPct}% adverse move).
+                                            </span>
+                                        </>
+                                    );
+                                })()}
                             </div>
 
                             <div>

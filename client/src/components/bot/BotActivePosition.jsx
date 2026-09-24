@@ -155,13 +155,27 @@ function SinglePositionCard({ trade, currentPrice, onCloseTrade, navigate }) {
                         </div>
                     </div>
                     <div className="p-3 bg-red-500/5 rounded-xl border border-red-500/20">
-                        <div className="text-[10px] uppercase font-bold text-red-400">Stop Loss (SL)</div>
+                        <div className="flex items-center justify-between">
+                            <span className="text-[10px] uppercase font-bold text-red-400">Stop Loss (SL)</span>
+                            {trade.stopLossTrigger && (
+                                <span className="text-[9px] font-bold text-red-400/80 font-mono">
+                                    Trig: ${Number(trade.stopLossTrigger).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 5 })}
+                                </span>
+                            )}
+                        </div>
                         <div className="text-sm font-black text-red-400 tabular-nums mt-0.5">
                             ${Number(sl).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 5 })}
                         </div>
                     </div>
                     <div className="p-3 bg-emerald-500/5 rounded-xl border border-emerald-500/20">
-                        <div className="text-[10px] uppercase font-bold text-emerald-400">Take Profit (TP)</div>
+                        <div className="flex items-center justify-between">
+                            <span className="text-[10px] uppercase font-bold text-emerald-400">Take Profit (TP)</span>
+                            {trade.takeProfitTrigger && (
+                                <span className="text-[9px] font-bold text-emerald-400/80 font-mono">
+                                    Trig: ${Number(trade.takeProfitTrigger).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 5 })}
+                                </span>
+                            )}
+                        </div>
                         <div className="text-sm font-black text-emerald-400 tabular-nums mt-0.5">
                             ${Number(tp).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 5 })}
                         </div>

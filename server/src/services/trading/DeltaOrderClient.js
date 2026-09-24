@@ -109,7 +109,19 @@ class DeltaOrderClient {
      * Place a market or limit order with optional bracket (SL + TP).
      */
     async placeOrder(params) {
-        const { symbol, side, size, orderType, price, stopLoss, takeProfit, leverage, reduceOnly } = params;
+        const {
+            symbol,
+            side,
+            size,
+            orderType,
+            price,
+            stopLoss,
+            stopLossTrigger,
+            takeProfit,
+            takeProfitTrigger,
+            leverage,
+            reduceOnly,
+        } = params;
 
         const body = {
             product_symbol: symbol,
@@ -133,15 +145,19 @@ class DeltaOrderClient {
         }
 
         // Bracket orders — stop loss
-        if (stopLoss) {
-            body.bracket_stop_loss_price  = stopLoss.toString();
-            body.bracket_stop_loss_limit_price = stopLoss.toString();
+        // bracket_stop_loss_price = Early Trigger price (activates order)
+        // bracket_stop_loss_limit_price = Limit floor price (guarantees marketable fill)
+        if (stopLoss || stopLossTrigger) {
+            body.bracket_stop_loss_price       = (stopLossTrigger || stopLoss).toString();
+            body.bracket_stop_loss_limit_price = (stopLoss || stopLossTrigger).toString();
         }
 
         // Bracket orders — take profit
-        if (takeProfit) {
-            body.bracket_take_profit_price       = takeProfit.toString();
-            body.bracket_take_profit_limit_price = takeProfit.toString();
+        // bracket_take_profit_price = Early Trigger price (places order in book early)
+        // bracket_take_profit_limit_price = Target Limit price (where maker order rests for fill)
+        if (takeProfit || takeProfitTrigger) {
+            body.bracket_take_profit_price       = (takeProfitTrigger || takeProfit).toString();
+            body.bracket_take_profit_limit_price = (takeProfit || takeProfitTrigger).toString();
         }
 
         // Client order ID for idempotency

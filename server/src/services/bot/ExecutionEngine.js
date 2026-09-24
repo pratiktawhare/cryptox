@@ -90,7 +90,9 @@ class ExecutionEngine {
             direction,
             entryPrice,
             stopLoss,
+            stopLossTrigger = null,
             takeProfit,
+            takeProfitTrigger = null,
             quantity,
             leverage,
             margin,
@@ -150,7 +152,9 @@ class ExecutionEngine {
                     direction,
                     entryPrice,
                     stopLoss,
+                    stopLossTrigger,
                     takeProfit,
+                    takeProfitTrigger,
                     quantity,
                     leverage,
                     margin,
@@ -171,7 +175,9 @@ class ExecutionEngine {
                     direction,
                     entryPrice,
                     stopLoss,
+                    stopLossTrigger,
                     takeProfit,
+                    takeProfitTrigger,
                     quantity,
                     leverage,
                     margin,
@@ -201,7 +207,9 @@ class ExecutionEngine {
             direction,
             entryPrice,
             stopLoss,
+            stopLossTrigger = null,
             takeProfit,
+            takeProfitTrigger = null,
             quantity,
             leverage,
             margin,
@@ -228,8 +236,6 @@ class ExecutionEngine {
         // RiskEngine computes SL/TP as offsets from entryPrice (snapshot.close).
         // If fillPrice differs (market moved between scan and execution), we must
         // shift SL and TP by the same delta so the intended distance geometry is preserved.
-        // Without this, a SHORT with TP $0.60 below snapshot could end up only $0.06
-        // from the actual fill price — mathematically impossible to win.
         const spec = productSpec || productCatalog.getBySymbol(symbol);
         const contractValue = parseFloat(spec?.contract_value || 1);
         const tickSize = parseFloat(spec?.tick_size || 0.001);
@@ -239,13 +245,17 @@ class ExecutionEngine {
             return parseFloat((Math.round(price / tick) * tick).toFixed(8));
         };
 
-        let adjStopLoss   = stopLoss;
-        let adjTakeProfit = takeProfit;
+        let adjStopLoss          = stopLoss;
+        let adjStopLossTrigger   = stopLossTrigger;
+        let adjTakeProfit        = takeProfit;
+        let adjTakeProfitTrigger = takeProfitTrigger;
         if (fillPrice !== entryPrice && entryPrice > 0) {
             const priceDelta = fillPrice - entryPrice;
             adjStopLoss   = roundToTick(stopLoss   + priceDelta, tickSize);
-            adjTakeProfit = roundToTick(takeProfit  + priceDelta, tickSize);
-            console.log(`[ExecutionEngine] 📍 Adjusted SL/TP for price slippage: entry $${entryPrice} → fill $${fillPrice} (Δ${priceDelta > 0 ? '+' : ''}${priceDelta.toFixed(4)}). New SL=$${adjStopLoss}, TP=$${adjTakeProfit}`);
+            adjTakeProfit = roundToTick(takeProfit + priceDelta, tickSize);
+            if (stopLossTrigger)   adjStopLossTrigger   = roundToTick(stopLossTrigger   + priceDelta, tickSize);
+            if (takeProfitTrigger) adjTakeProfitTrigger = roundToTick(takeProfitTrigger + priceDelta, tickSize);
+            console.log(`[ExecutionEngine] 📍 Adjusted SL/TP for price slippage: entry $${entryPrice} → fill $${fillPrice} (Δ${priceDelta > 0 ? '+' : ''}${priceDelta.toFixed(4)}). New SL=$${adjStopLoss} (trig $${adjStopLossTrigger}), TP=$${adjTakeProfit} (trig $${adjTakeProfitTrigger})`);
         }
 
         // Check PaperWallet has enough available margin
@@ -308,9 +318,11 @@ class ExecutionEngine {
             mode: 'paper',
             symbol,
             direction,
-            entryPrice: fillPrice,
-            stopLoss:   adjStopLoss,
-            takeProfit: adjTakeProfit,
+            entryPrice:        fillPrice,
+            stopLoss:          adjStopLoss,
+            stopLossTrigger:   adjStopLossTrigger,
+            takeProfit:        adjTakeProfit,
+            takeProfitTrigger: adjTakeProfitTrigger,
             quantity,
             contractValue,
             leverage,
@@ -383,7 +395,9 @@ class ExecutionEngine {
             direction,
             entryPrice,
             stopLoss,
+            stopLossTrigger = null,
             takeProfit,
+            takeProfitTrigger = null,
             quantity,
             leverage,
             margin,
@@ -401,8 +415,8 @@ class ExecutionEngine {
 
         // 2. Place entry order as limit order with bracket TP/SL
         await this._logEvent(userId, 'live', 'ORDER_SUBMITTED', 'info',
-            `[Live] Submitting limit ${direction.toUpperCase()} ${quantity} ${symbol} @ $${entryPrice} with bracket SL: $${stopLoss}, TP: $${takeProfit}`,
-            { symbol, side, quantity, leverage, stopLoss, takeProfit, orderType: 'limit_order' }
+            `[Live] Submitting limit ${direction.toUpperCase()} ${quantity} ${symbol} @ $${entryPrice} with bracket SL: $${stopLoss} (trigger: $${stopLossTrigger || stopLoss}), TP: $${takeProfit} (trigger: $${takeProfitTrigger || takeProfit})`,
+            { symbol, side, quantity, leverage, stopLoss, stopLossTrigger, takeProfit, takeProfitTrigger, orderType: 'limit_order' }
         );
 
         let orderResp;
@@ -414,7 +428,9 @@ class ExecutionEngine {
                 orderType: 'limit_order',
                 price: entryPrice,
                 stopLoss,
+                stopLossTrigger,
                 takeProfit,
+                takeProfitTrigger,
                 leverage,
             });
         } catch (placeErr) {
@@ -441,7 +457,7 @@ class ExecutionEngine {
         // 3. If the order filled immediately (instant limit fill or market order), activate inline.
         if (order.state === 'closed' || order.state === 'filled') {
             return await this._activateLiveTrade({
-                userId, symbol, direction, entryPrice, stopLoss, takeProfit,
+                userId, symbol, direction, entryPrice, stopLoss, stopLossTrigger, takeProfit, takeProfitTrigger,
                 quantity, leverage, margin, signalScore, regime,
                 walletBalanceAtEntry, effectiveBudgetAtEntry, io,
                 orderId, filledOrder: order, reverseMode: Boolean(params.reverseMode),
@@ -460,7 +476,9 @@ class ExecutionEngine {
             direction,
             entryPrice,           // planned limit price; updated to actual fill price on activation
             stopLoss,
+            stopLossTrigger,
             takeProfit,
+            takeProfitTrigger,
             quantity,
             leverage,
             margin,
@@ -480,7 +498,7 @@ class ExecutionEngine {
 
         await this._logEvent(userId, 'live', 'ORDER_PENDING', 'info',
             `[Live] Limit order ${orderId} awaiting fill: ${direction.toUpperCase()} ${quantity} ${symbol} @ $${entryPrice} (SL: $${stopLoss}, TP: $${takeProfit}). Auto-cancels in 15 min if unfilled.`,
-            { tradeId: trade._id, orderId, symbol, direction, quantity, entryPrice, stopLoss, takeProfit }
+            { tradeId: trade._id, orderId, symbol, direction, quantity, entryPrice, stopLoss, stopLossTrigger, takeProfit, takeProfitTrigger }
         );
 
         this._emit(io, userId, 'bot_trade_pending', { trade: trade.toObject(), mode: 'live' });
@@ -495,7 +513,7 @@ class ExecutionEngine {
      */
     async _activateLiveTrade(params) {
         const {
-            userId, symbol, direction, stopLoss, takeProfit,
+            userId, symbol, direction, stopLoss, stopLossTrigger = null, takeProfit, takeProfitTrigger = null,
             quantity, leverage, margin, signalScore, regime,
             walletBalanceAtEntry, effectiveBudgetAtEntry, io,
             orderId, filledOrder, reverseMode,
@@ -519,13 +537,15 @@ class ExecutionEngine {
                 trade.fees           = actualFillPrice * actualFilledSize * 0.0002;
                 trade.result         = 'open';
                 trade.entryOrderStatus = 'filled';
+                if (stopLossTrigger)   trade.stopLossTrigger = stopLossTrigger;
+                if (takeProfitTrigger) trade.takeProfitTrigger = takeProfitTrigger;
                 await trade.save();
             }
         } else {
             // Create fresh BotTrade (instant fill path)
             trade = await BotTrade.create({
                 userId, mode: 'live', symbol, direction,
-                entryPrice: actualFillPrice, stopLoss, takeProfit,
+                entryPrice: actualFillPrice, stopLoss, stopLossTrigger, takeProfit, takeProfitTrigger,
                 quantity: actualFilledSize, leverage, margin,
                 fees: actualFillPrice * actualFilledSize * 0.0002,
                 entryTime: new Date(), result: 'open',
@@ -540,10 +560,10 @@ class ExecutionEngine {
             { orderId, actualFillPrice, actualFilledSize }
         );
         await this._logEvent(userId, 'live', 'TP_PLACED', 'info',
-            `[Live] Take profit bracket active at $${takeProfit}`, { symbol, takeProfit }
+            `[Live] Take profit bracket active: limit $${takeProfit} (trigger $${takeProfitTrigger || takeProfit})`, { symbol, takeProfit, takeProfitTrigger }
         );
         await this._logEvent(userId, 'live', 'SL_PLACED', 'info',
-            `[Live] Stop loss bracket active at $${stopLoss}`, { symbol, stopLoss }
+            `[Live] Stop loss bracket active: limit $${stopLoss} (trigger $${stopLossTrigger || stopLoss})`, { symbol, stopLoss, stopLossTrigger }
         );
         await this._logEvent(userId, 'live', 'POSITION_OPENED', 'info',
             `[Live] Position opened: ${direction.toUpperCase()} ${actualFilledSize} ${symbol} @ $${actualFillPrice} (Margin: $${margin.toFixed(2)})`,

@@ -92,36 +92,11 @@ function calcRisk(params) {
         return fail('ATR not available — cannot calculate SL distance');
     }
 
-    // ── Step 4: Stop Loss ─────────────────────────────────────────────────────
-    // Wide Stop Loss: default 5.0x ATR with a minimum 3.5% price distance floor.
-    // Clamped before liquidation price so liquidation never happens before SL.
-    const leverage     = Math.min(config.maxLeverage || 20, parseFloat(productSpec?.max_leverage || 100));
-    const slMultiplier = config.slAtrMultiplier > 0 ? config.slAtrMultiplier : 5.0;
-    const atrDistance  = atr * slMultiplier;
-    const minPercentFloor = entryPrice * 0.035; // at least 3.5% adverse price move
-    let slDistance   = Math.max(atrDistance, minPercentFloor);
-
-    // Safeguard: Ensure SL distance does NOT exceed 85% of liquidation distance
-    // For 20x leverage, liquidation occurs around ~4.5% to 5.0% adverse move.
-    // Clamping to 85% of (1/leverage) ensures SL always triggers cleanly before liquidation.
-    const maxSafeSlDistance = entryPrice * ((1 / leverage) * 0.85);
-    if (slDistance > maxSafeSlDistance) {
-        slDistance = maxSafeSlDistance;
-    }
-
-    const stopLoss     = isLong
-        ? parseFloat((entryPrice - slDistance).toFixed(8))
-        : parseFloat((entryPrice + slDistance).toFixed(8));
-
-    if (stopLoss <= 0) {
-        return fail('Calculated SL price is invalid (≤ 0)');
-    }
-
-    // ── Step 5: Position sizing ───────────────────────────────────────────────
-    // contractValue: how many USDT each contract represents at par
+    // ── Step 4: Position sizing ───────────────────────────────────────────────
     const contractValue = parseFloat(productSpec?.contract_value || 1);
     const minQty        = parseFloat(productSpec?.min_quantity || 1);
     const tickSize      = parseFloat(productSpec?.tick_size    || 0.001);
+    const leverage      = Math.min(config.maxLeverage || 20, parseFloat(productSpec?.max_leverage || 100));
 
     // Maximum contracts affordable within real available balance at this leverage
     const maxQtyFromBalance = Math.floor((actualAvailableBalance * leverage) / (contractValue * entryPrice));
@@ -140,10 +115,9 @@ function calcRisk(params) {
 
         qty = Math.min(Math.max(minQty, rawQtyFromParts), maxQtyFromBalance);
     } else {
-        // Fallback: ATR-risk sizing
-        const rawQty = riskAmt / (contractValue * slDistance);
+        // Fallback: budget-based sizing
         const maxQtyFromBudget = Math.floor((effectiveBudget * leverage) / (contractValue * entryPrice));
-        qty = Math.min(Math.floor(rawQty), maxQtyFromBudget, maxQtyFromBalance);
+        qty = Math.min(maxQtyFromBudget, maxQtyFromBalance);
         if (qty < minQty && maxQtyFromBudget >= minQty) {
             qty = minQty;
         }
@@ -153,15 +127,13 @@ function calcRisk(params) {
         return fail(`Budget insufficient for minimum contract size (${minQty} contracts require $${((minQty * contractValue * entryPrice) / leverage).toFixed(2)} margin)`);
     }
 
-    // ── Step 6: Margin check ──────────────────────────────────────────────────
+    // ── Step 5: Margin check ──────────────────────────────────────────────────
     const margin = (qty * contractValue * entryPrice) / leverage;
     if (margin > actualAvailableBalance) {
         return fail(`Required margin ($${margin.toFixed(2)}) exceeds available balance ($${actualAvailableBalance.toFixed(2)})`);
     }
 
-    // ── Step 7: Take Profit — targeted ROI or ATR momentum ───────────────────
-    // If targetRoiPct is configured (e.g. 5% ROI on margin):
-    // Position Notional = Margin * leverage
+    // ── Step 6: Take Profit (Target) calculation ─────────────────────────────
     // Target Net Profit = Margin * (targetRoiPct / 100)
     // Required Price Move = (Target Net Profit + Total Costs) / (qty * contractValue)
     // = entryPrice * (targetRoiPct / (100 * leverage)) + breakEvenAbs
@@ -174,11 +146,11 @@ function calcRisk(params) {
         ? entryPrice + roiPriceDist
         : entryPrice - roiPriceDist;
 
-    // ── Step 8: Cost engine — estimate break-even points ─────────────────────
+    // Estimate break-even points from exchange fees and spread
     const cost = calcTradeCosts({
         entryPrice,
         targetPrice:   tpPreliminary,
-        stopPrice:     stopLoss,
+        stopPrice:     isLong ? (entryPrice * 0.95) : (entryPrice * 1.05),
         direction,
         qty,
         contractValue,
@@ -187,8 +159,7 @@ function calcRisk(params) {
         minRewardRisk: minRR,
     });
 
-    // ── Step 9: Adjust TP to guarantee break-even + requested net ROI ────────
-    // Target distance = required ROI price move + breakEvenAbs (Delta fees with GST + spread)
+    // Required Target distance = required ROI price move + breakEvenAbs (Delta fees with GST + spread)
     const requiredTpDist = Math.max(
         roiPriceDist + cost.breakEvenAbs,
         cost.breakEvenAbs * (config.tpSafetyMultiplier || 1.5),
@@ -199,7 +170,48 @@ function calcRisk(params) {
         ? parseFloat((entryPrice + requiredTpDist).toFixed(8))
         : parseFloat((entryPrice - requiredTpDist).toFixed(8));
 
-    // ── Step 10: Re-run cost engine with final TP ─────────────────────────────
+    // Early Take Profit Trigger (triggers at 75% of target distance so limit order rests in order book early)
+    // E.g. +0.33% target limit triggers early at +0.25%
+    const tpTriggerDist = requiredTpDist * 0.75;
+    const takeProfitTrigger = isLong
+        ? parseFloat((entryPrice + tpTriggerDist).toFixed(8))
+        : parseFloat((entryPrice - tpTriggerDist).toFixed(8));
+
+    // ── Step 7: Stop Loss calculation (Target × Multiplier) ───────────────────
+    // Multiplies target distance by configured multiplier (e.g. 0.33% target × 4x = 1.32% stop loss)
+    const slMultiplier = config.slAtrMultiplier > 0 ? config.slAtrMultiplier : 4.0;
+    let slDistance = requiredTpDist * slMultiplier;
+
+    // Safeguard 1: Ensure SL distance does NOT exceed 85% of liquidation distance
+    // For 20x leverage, liquidation occurs around ~4.5% to 5.0% adverse move.
+    // Clamping to 85% of (1/leverage) ensures SL always triggers cleanly before liquidation.
+    const maxSafeSlDistance = entryPrice * ((1 / leverage) * 0.85);
+    if (slDistance > maxSafeSlDistance) {
+        slDistance = maxSafeSlDistance;
+    }
+
+    // Safeguard 2: Minimum safe distance to prevent instant SL on spread/noise (at least 0.2% or 0.5x target)
+    const minSafeSlDistance = Math.max(requiredTpDist * 0.5, entryPrice * 0.002);
+    if (slDistance < minSafeSlDistance) {
+        slDistance = minSafeSlDistance;
+    }
+
+    const stopLoss = isLong
+        ? parseFloat((entryPrice - slDistance).toFixed(8))
+        : parseFloat((entryPrice + slDistance).toFixed(8));
+
+    if (stopLoss <= 0) {
+        return fail('Calculated SL price is invalid (≤ 0)');
+    }
+
+    // Early Stop Loss Trigger (triggers at 82% of stop loss distance to guarantee aggressive marketable exit)
+    // E.g. -1.50% stop loss limit triggers early at -1.23%
+    const slTriggerDist = slDistance * 0.82;
+    const stopLossTrigger = isLong
+        ? parseFloat((entryPrice - slTriggerDist).toFixed(8))
+        : parseFloat((entryPrice + slTriggerDist).toFixed(8));
+
+    // ── Step 8: Validate full trade viability with CostEngine ────────────────
     const finalCost = calcTradeCosts({
         entryPrice,
         targetPrice:   takeProfit,
@@ -223,21 +235,23 @@ function calcRisk(params) {
     };
 
     return {
-        valid:           true,
-        reason:          null,
+        valid:             true,
+        reason:            null,
         symbol,
         direction,
         qty,
-        entryPrice:      roundToTick(entryPrice, tickSize),
-        stopLoss:        roundToTick(stopLoss,   tickSize),
-        takeProfit:      roundToTick(takeProfit,  tickSize),
+        entryPrice:        roundToTick(entryPrice,        tickSize),
+        stopLoss:          roundToTick(stopLoss,          tickSize),
+        stopLossTrigger:   roundToTick(stopLossTrigger,   tickSize),
+        takeProfit:        roundToTick(takeProfit,        tickSize),
+        takeProfitTrigger: roundToTick(takeProfitTrigger, tickSize),
         leverage,
         contractValue,
-        margin:          parseFloat(margin.toFixed(6)),
-        effectiveBudget: parseFloat(effectiveBudget.toFixed(4)),
-        riskAmt:         parseFloat(riskAmt.toFixed(6)),
-        slDistance:      parseFloat(slDistance.toFixed(8)),
-        cost:            finalCost,
+        margin:            parseFloat(margin.toFixed(6)),
+        effectiveBudget:   parseFloat(effectiveBudget.toFixed(4)),
+        riskAmt:           parseFloat(riskAmt.toFixed(6)),
+        slDistance:        parseFloat(slDistance.toFixed(8)),
+        cost:              finalCost,
     };
 }
 
@@ -245,7 +259,7 @@ function calcRisk(params) {
 function fail(reason) {
     return {
         valid: false, reason,
-        qty: null, entryPrice: null, stopLoss: null, takeProfit: null,
+        qty: null, entryPrice: null, stopLoss: null, stopLossTrigger: null, takeProfit: null, takeProfitTrigger: null,
         leverage: null, margin: null, effectiveBudget: null, riskAmt: null, cost: null,
     };
 }

@@ -202,14 +202,26 @@ class PositionMonitor {
             }
         );
 
-        // Check Take Profit hit
-        let hitTP = isLong ? currentPrice >= trade.takeProfit : currentPrice <= trade.takeProfit;
-        // Check Stop Loss hit
-        let hitSL = isLong ? currentPrice <= trade.stopLoss : currentPrice >= trade.stopLoss;
+        // Check Take Profit hit (Limit filled once price reaches target)
+        const hitTP = isLong ? currentPrice >= trade.takeProfit : currentPrice <= trade.takeProfit;
+
+        // Check Stop Loss hit:
+        // Early trigger: activates when price crosses stopLossTrigger (or stopLoss if trigger not set)
+        // and executes an immediate marketable order bounded by stopLoss limit.
+        const slTriggerPrice = trade.stopLossTrigger || trade.stopLoss;
+        const hitSL = isLong ? currentPrice <= slTriggerPrice : currentPrice >= slTriggerPrice;
 
         if (hitTP || hitSL) {
             const exitReason = hitTP ? 'take_profit' : 'stop_loss';
-            const exitPrice = hitTP ? trade.takeProfit : trade.stopLoss;
+            let exitPrice = trade.takeProfit;
+            if (!hitTP) {
+                // For SL: fill at currentPrice, protected by stopLoss limit floor
+                if (isLong) {
+                    exitPrice = Math.max(currentPrice, trade.stopLoss);
+                } else {
+                    exitPrice = Math.min(currentPrice, trade.stopLoss);
+                }
+            }
             await this._closePaperTrade(trade, exitPrice, exitReason, contractValue, isLong);
         } else {
             // Push real-time position update
