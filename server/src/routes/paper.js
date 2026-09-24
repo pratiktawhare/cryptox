@@ -217,6 +217,33 @@ router.post('/reset', async (req, res) => {
         await TradeHistory.deleteMany({ userId: req.user.id, mode: 'paper' });
         await PaperOrder.deleteMany({ userId: req.user.id });
 
+        // Also clean up any open BotTrades for paper mode
+        const BotTrade = require('../models/BotTrade');
+        const openBotTrades = await BotTrade.find({
+            userId: req.user.id,
+            mode: 'paper',
+            result: { $in: ['open', 'pending_entry'] },
+        });
+        if (openBotTrades.length > 0) {
+            await BotTrade.updateMany(
+                { userId: req.user.id, mode: 'paper', result: { $in: ['open', 'pending_entry'] } },
+                {
+                    $set: {
+                        result: 'cancelled',
+                        exitReason: 'manual_close',
+                        exitTime: new Date(),
+                    }
+                }
+            );
+            const io = req.app.get('io');
+            if (io) {
+                for (const t of openBotTrades) {
+                    io.to(`user:${req.user.id}`).emit('bot_trade_closed', { trade: { ...t.toObject(), result: 'cancelled' }, mode: 'paper', symbol: t.symbol });
+                    io.emit('bot_trade_closed', { trade: { ...t.toObject(), result: 'cancelled' }, mode: 'paper', symbol: t.symbol });
+                }
+            }
+        }
+
         // Reset wallet
         let wallet = await PaperWallet.findOne({ userId: req.user.id });
         if (!wallet) {

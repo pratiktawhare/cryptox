@@ -150,6 +150,8 @@ router.post('/emergency-stop', async (req, res) => {
         );
 
         const bot = mode === 'paper' ? paperBot : liveBot;
+        if (!bot.io) bot.io = req.app.get('io');
+        if (!bot.wsManager) bot.wsManager = req.app.get('wsManager');
         const result = await bot.emergencyStop(userId, symbol, 'user_emergency_stop');
 
         res.json({ success: true, mode, running: false, isRunning: false, result });
@@ -160,7 +162,7 @@ router.post('/emergency-stop', async (req, res) => {
 
 // ── POST /api/bot/close-trade ─────────────────────────────────────────────────
 router.post('/close-trade', async (req, res) => {
-    const { mode, symbol } = req.body;
+    const { mode, symbol, tradeId } = req.body;
     if (!['paper', 'live'].includes(mode)) {
         return res.status(400).json({ error: 'mode must be "paper" or "live"' });
     }
@@ -173,6 +175,7 @@ router.post('/close-trade', async (req, res) => {
             userId,
             mode,
             symbol,
+            tradeId,
             reason: 'manual_close',
             io,
             wsManager,

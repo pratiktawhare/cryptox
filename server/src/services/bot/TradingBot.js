@@ -20,6 +20,7 @@ const BotTrade = require('../../models/BotTrade');
 const BotSignal = require('../../models/BotSignal');
 const BotEvent = require('../../models/BotEvent');
 const PaperWallet = require('../../models/PaperWallet');
+const PaperPosition = require('../../models/PaperPosition');
 const ApiKey = require('../../models/ApiKey');
 const User = require('../../models/User');
 const DeltaOrderClient = require('../trading/DeltaOrderClient');
@@ -133,9 +134,14 @@ class TradingBot {
     async emergencyStop(userId, symbol = null, reason = 'user_emergency_stop') {
         let closeResult = null;
         if (!symbol) {
-            const openTrades = await BotTrade.find({ userId, mode: this.mode, result: 'open' });
+            const openTrades = await BotTrade.find({
+                userId,
+                mode: this.mode,
+                result: { $in: ['open', 'pending_entry'] },
+            });
             for (const t of openTrades) {
                 await executionEngine.emergencyClose({
+                    tradeId: t._id,
                     userId,
                     mode: this.mode,
                     symbol: t.symbol,
@@ -157,6 +163,7 @@ class TradingBot {
         }
 
         this.stop();
+        this._emitStatus();
         return closeResult;
     }
 
@@ -305,6 +312,67 @@ class TradingBot {
         }
 
         // ── 2. Safety Gates ────────────────────────────────────────────────────
+        // Reconcile open BotTrades with actual exchange/paper positions first
+        // so that manually closed or emergency-stopped positions never block new trades.
+        if (this.mode === 'paper') {
+            const unverifiedTrades = await BotTrade.find({
+                userId,
+                mode: 'paper',
+                result: { $in: ['open', 'pending_entry'] },
+            });
+            for (const t of unverifiedTrades) {
+                const openPos = await PaperPosition.findOne({ userId, symbol: t.symbol, status: 'open' });
+                if (!openPos) {
+                    console.log(`[TradingBot] 🔄 Reconciling orphan paper trade for ${t.symbol} (PaperPosition no longer open)`);
+                    const lastPos = await PaperPosition.findOne({ userId, symbol: t.symbol }).sort({ updatedAt: -1 });
+                    const closePrice = lastPos?.closePrice || t.entryPrice;
+                    const netPnl = lastPos?.realisedPnl || 0;
+                    t.exitPrice = closePrice;
+                    t.exitTime = new Date();
+                    t.durationSeconds = Math.round((t.exitTime - (t.entryTime || t.createdAt)) / 1000);
+                    t.grossPnl = netPnl;
+                    t.netPnl = netPnl;
+                    t.result = netPnl >= 0 ? 'win' : 'loss';
+                    t.exitReason = lastPos?.status === 'closed_tp' ? 'take_profit' : (lastPos?.status === 'closed_sl' ? 'stop_loss' : 'manual_close');
+                    await t.save();
+                    if (this.io) {
+                        this.io.to(`user:${userId}`).emit('bot_trade_closed', { trade: t.toObject(), mode: 'paper', symbol: t.symbol });
+                        this.io.emit('bot_trade_closed', { trade: t.toObject(), mode: 'paper', symbol: t.symbol });
+                    }
+                }
+            }
+        } else if (this.mode === 'live') {
+            try {
+                const client = await this._buildDeltaClient(userId);
+                if (client) {
+                    const posResp = await client.getPositions();
+                    const livePositions = posResp?.result || [];
+                    const unverifiedLiveTrades = await BotTrade.find({
+                        userId,
+                        mode: 'live',
+                        result: { $in: ['open', 'pending_entry'] },
+                    });
+                    for (const t of unverifiedLiveTrades) {
+                        const hasPos = livePositions.some(p => p.product_symbol === t.symbol && Math.abs(parseFloat(p.size || 0)) > 0);
+                        if (!hasPos) {
+                            console.log(`[TradingBot] 🔄 Reconciling orphan live trade for ${t.symbol} (no active position on Delta)`);
+                            t.exitTime = new Date();
+                            t.durationSeconds = Math.round((t.exitTime - (t.entryTime || t.createdAt)) / 1000);
+                            t.result = 'cancelled';
+                            t.exitReason = 'manual_close';
+                            await t.save();
+                            if (this.io) {
+                                this.io.to(`user:${userId}`).emit('bot_trade_closed', { trade: t.toObject(), mode: 'live', symbol: t.symbol });
+                                this.io.emit('bot_trade_closed', { trade: t.toObject(), mode: 'live', symbol: t.symbol });
+                            }
+                        }
+                    }
+                }
+            } catch (reconErr) {
+                console.warn('[TradingBot] Live reconciliation check warning:', reconErr.message);
+            }
+        }
+
         // Check for existing open trades (max simultaneous open positions limit)
         // Include pending_entry (limit orders awaiting fill) in the count so we don't
         // double-enter the same symbol while its entry order is sitting on the exchange.

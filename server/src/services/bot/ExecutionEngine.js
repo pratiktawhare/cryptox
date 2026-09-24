@@ -592,9 +592,9 @@ class ExecutionEngine {
      * @returns {Promise<{ success: boolean, trade?: object, reason?: string }>}
      */
     async emergencyClose(params) {
-        let userId, mode, symbol, reason, io, wsManager;
+        let userId, mode, symbol, tradeId, reason, io, wsManager;
         if (params && typeof params === 'object' && !Array.isArray(params) && !params._bsontype) {
-            ({ userId, mode, symbol, reason = 'emergency', io = null, wsManager = null } = params);
+            ({ userId, mode, symbol, tradeId, reason = 'emergency', io = null, wsManager = null } = params);
         } else {
             userId = arguments[0];
             mode = arguments[1];
@@ -602,15 +602,26 @@ class ExecutionEngine {
             reason = arguments[3] || 'emergency';
         }
 
-        const query = { userId, mode, result: 'open' };
-        if (symbol) {
-            query.symbol = symbol.toUpperCase();
-        }
+        const validExitReasons = ['take_profit', 'stop_loss', 'manual', 'manual_close', 'emergency', 'user_emergency_stop', 'timeout', 'entry_timeout', 'smart_loss_guard'];
+        const safeReason = validExitReasons.includes(reason) ? reason : 'emergency';
 
-        const trade = await BotTrade.findOne(query);
+        let trade = null;
+        if (tradeId) {
+            trade = await BotTrade.findById(tradeId);
+        }
+        if (!trade) {
+            const query = { userId, mode, result: { $in: ['open', 'pending_entry'] } };
+            if (symbol) {
+                query.symbol = symbol.toUpperCase();
+            }
+            trade = await BotTrade.findOne(query);
+        }
 
         if (!trade) {
             return { success: false, reason: 'no_open_trade_found' };
+        }
+        if (!symbol && trade.symbol) {
+            symbol = trade.symbol;
         }
 
         try {
@@ -679,22 +690,23 @@ class ExecutionEngine {
                 // Update BotTrade
                 trade.exitPrice = closePrice;
                 trade.exitTime = new Date();
-                trade.durationSeconds = Math.round((trade.exitTime - trade.entryTime) / 1000);
+                trade.durationSeconds = Math.round((trade.exitTime - (trade.entryTime || trade.createdAt)) / 1000);
                 trade.grossPnl = grossPnl;
                 trade.fees = totalFees;
                 trade.netPnl = netPnl;
                 trade.result = netPnl >= 0 ? 'win' : 'loss';
-                trade.exitReason = reason || 'emergency';
+                trade.exitReason = safeReason;
                 await trade.save();
 
                 await this._logEvent(userId, 'paper', 'EMERGENCY_STOP', 'critical',
                     `[Paper] Emergency closed ${symbol} @ $${closePrice} (Net PnL: $${netPnl.toFixed(4)})`,
-                    { tradeId: trade._id, symbol, closePrice, netPnl, reason }
+                    { tradeId: trade._id, symbol, closePrice, netPnl, reason: safeReason }
                 );
 
                 this._emit(io, userId, 'bot_trade_closed', {
                     trade: trade.toObject(),
                     mode: 'paper',
+                    symbol: trade.symbol,
                 });
 
                 return { success: true, trade: trade.toObject() };
@@ -711,18 +723,17 @@ class ExecutionEngine {
 
                 // Close position via market order
                 const side = trade.direction === 'long' ? 'buy' : 'sell';
-                let closeResp;
+                let closeResp = null;
                 try {
                     closeResp = await client.closePosition(symbol, trade.quantity, side);
                 } catch (closeErr) {
-                    console.error(`[ExecutionEngine] ❌ Live emergency closePosition failed:`, closeErr.message);
-                    throw closeErr;
+                    console.warn(`[ExecutionEngine] Live emergency closePosition warning:`, closeErr.message);
                 }
 
                 trade.exitTime = new Date();
-                trade.durationSeconds = Math.round((trade.exitTime - trade.entryTime) / 1000);
+                trade.durationSeconds = Math.round((trade.exitTime - (trade.entryTime || trade.createdAt)) / 1000);
                 trade.result = 'cancelled';
-                trade.exitReason = reason || 'emergency';
+                trade.exitReason = safeReason;
                 await trade.save();
 
                 await this._logEvent(userId, 'live', 'EMERGENCY_STOP', 'critical',
@@ -733,6 +744,7 @@ class ExecutionEngine {
                 this._emit(io, userId, 'bot_trade_closed', {
                     trade: trade.toObject(),
                     mode: 'live',
+                    symbol: trade.symbol,
                 });
 
                 return { success: true, trade: trade.toObject() };
@@ -839,6 +851,7 @@ class ExecutionEngine {
         if (!io) return;
         try {
             io.to(`user:${userId}`).emit(event, payload);
+            io.emit(event, payload);
         } catch (err) {
             console.error(`[ExecutionEngine] Socket emit error:`, err.message);
         }

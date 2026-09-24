@@ -178,6 +178,40 @@ router.post('/close', async (req, res) => {
         const result = await orderExecutor.closePosition(
             req.user.id, symbol.toUpperCase(), parseInt(size), side, req.io
         );
+
+        // Also reconcile any matching open BotTrade in live mode
+        try {
+            const BotTrade = require('../models/BotTrade');
+            const openBotTrade = await BotTrade.findOne({
+                userId: req.user.id,
+                mode: 'live',
+                symbol: symbol.toUpperCase(),
+                result: { $in: ['open', 'pending_entry'] },
+            });
+            if (openBotTrade) {
+                openBotTrade.result = 'cancelled';
+                openBotTrade.exitReason = 'manual_close';
+                openBotTrade.exitTime = new Date();
+                openBotTrade.durationSeconds = Math.round((openBotTrade.exitTime - (openBotTrade.entryTime || openBotTrade.createdAt)) / 1000);
+                await openBotTrade.save();
+                const io = req.app.get('io') || req.io;
+                if (io) {
+                    io.to(`user:${req.user.id}`).emit('bot_trade_closed', {
+                        trade: openBotTrade.toObject(),
+                        mode: 'live',
+                        symbol: openBotTrade.symbol,
+                    });
+                    io.emit('bot_trade_closed', {
+                        trade: openBotTrade.toObject(),
+                        mode: 'live',
+                        symbol: openBotTrade.symbol,
+                    });
+                }
+            }
+        } catch (botErr) {
+            console.warn('[routes/trading] Could not reconcile BotTrade on manual close:', botErr.message);
+        }
+
         res.json({ success: true, trade: result });
     } catch (err) {
         res.status(500).json({ error: err.message });

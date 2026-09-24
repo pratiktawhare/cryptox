@@ -192,6 +192,30 @@ class PositionMonitor {
         const unrealisedGross = priceDiff * trade.quantity * contractValue;
         const roe = trade.margin > 0 ? (unrealisedGross / trade.margin) * 100 : 0;
 
+        // Check if the underlying PaperPosition is still open
+        const openPaperPos = await PaperPosition.findOne({ userId: trade.userId, symbol, status: 'open' });
+        if (!openPaperPos) {
+            console.log(`[PositionMonitor] 📄 [Paper] Reconciling orphan BotTrade for ${trade.symbol} — PaperPosition is no longer open`);
+            const lastPos = await PaperPosition.findOne({ userId: trade.userId, symbol }).sort({ updatedAt: -1 });
+            const closePrice = lastPos?.closePrice || currentPrice || trade.entryPrice;
+            const netPnl = lastPos?.realisedPnl || 0;
+            trade.exitPrice = closePrice;
+            trade.exitTime = new Date();
+            trade.durationSeconds = Math.round((trade.exitTime - (trade.entryTime || trade.createdAt)) / 1000);
+            trade.grossPnl = netPnl;
+            trade.netPnl = netPnl;
+            trade.result = netPnl >= 0 ? 'win' : 'loss';
+            trade.exitReason = lastPos?.status === 'closed_tp' ? 'take_profit' : (lastPos?.status === 'closed_sl' ? 'stop_loss' : 'manual_close');
+            await trade.save();
+
+            this._emit(trade.userId, 'bot_trade_closed', {
+                trade: trade.toObject(),
+                mode: 'paper',
+                symbol: trade.symbol,
+            });
+            return;
+        }
+
         // Update PaperPosition for real-time tracking
         await PaperPosition.updateMany(
             { userId: trade.userId, symbol, status: 'open' },
@@ -579,6 +603,7 @@ class PositionMonitor {
         if (!this.io) return;
         try {
             this.io.to(`user:${userId}`).emit(event, payload);
+            this.io.emit(event, payload);
         } catch (err) {
             console.error(`[PositionMonitor] Socket emit error:`, err.message);
         }
