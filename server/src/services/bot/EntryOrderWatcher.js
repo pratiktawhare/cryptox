@@ -73,7 +73,7 @@ class EntryOrderWatcher {
     // ── Per-Trade Logic ─────────────────────────────────────────────────────────
 
     async _checkPendingTrade(trade) {
-        const orderId = trade.pendingEntryOrderId;
+        const orderId = trade.pendingEntryOrderId || trade.entryOrderId;
         if (!orderId) {
             await this._markCancelled(trade, 'missing_order_id');
             return;
@@ -129,16 +129,45 @@ class EntryOrderWatcher {
         }
 
         // ── Case 3: Still open — check 15-minute timeout ────────────────────────
-        const elapsedMs = Date.now() - new Date(trade.entryOrderPlacedAt || trade.entryTime).getTime();
+        const elapsedMs = Date.now() - new Date(trade.entryOrderPlacedAt || trade.entryTime || trade.createdAt).getTime();
         if (elapsedMs >= ENTRY_TIMEOUT_MS) {
             console.log(`[EntryOrderWatcher] ⏰ Order ${orderId} timed out after ${Math.round(elapsedMs / 60000)} min for ${trade.symbol}. Cancelling entry order only.`);
 
             // Cancel ONLY the specific entry order by ID — NEVER cancelAllOrders
             try {
                 await client.cancelOrder(orderId, trade.symbol);
+                console.log(`[EntryOrderWatcher] 🗑️ Limit entry order ${orderId} (${trade.symbol}) deleted on Delta Exchange.`);
             } catch (cancelErr) {
-                // May already be gone — log and continue to mark DB anyway
-                console.warn(`[EntryOrderWatcher] Cancel order ${orderId} warn:`, cancelErr.message);
+                // If it failed, check if the order might have filled right before cancel
+                console.warn(`[EntryOrderWatcher] Cancel order ${orderId} on Delta warn:`, cancelErr.message);
+                try {
+                    const freshOrder = await client.getOrder(orderId);
+                    if (freshOrder?.result?.state === 'closed' || freshOrder?.result?.state === 'filled') {
+                        console.log(`[EntryOrderWatcher] ⚡ Order ${orderId} actually filled right before cancel! Activating trade.`);
+                        await executionEngine._activateLiveTrade({
+                            userId:                 trade.userId,
+                            symbol:                 trade.symbol,
+                            direction:              trade.direction,
+                            entryPrice:             trade.entryPrice,
+                            stopLoss:               trade.stopLoss,
+                            takeProfit:             trade.takeProfit,
+                            quantity:               trade.quantity,
+                            leverage:               trade.leverage,
+                            margin:                 trade.margin,
+                            signalScore:            trade.signalScore,
+                            regime:                 trade.regime,
+                            walletBalanceAtEntry:   trade.walletBalanceAtEntry,
+                            effectiveBudgetAtEntry: trade.effectiveBudgetAtEntry,
+                            io:                     this.io,
+                            orderId,
+                            filledOrder:            freshOrder.result,
+                            reverseMode:            trade.reverseMode,
+                            existingTradeId:        trade._id,
+                        });
+                        return;
+                    }
+                } catch (checkErr) { /* ignore */ }
+
                 await this._logEvent(trade.userId, 'ENTRY_ORDER_CANCEL_WARN', 'warn',
                     `Cancel attempt for timed-out order ${orderId} returned: ${cancelErr.message}`,
                     { orderId, symbol: trade.symbol }
@@ -159,9 +188,10 @@ class EntryOrderWatcher {
 
     async _markCancelled(trade, reason) {
         trade.result           = 'cancelled';
-        trade.exitReason       = 'entry_timeout';
+        trade.exitReason       = (reason === 'entry_timeout' || reason === 'timeout') ? 'entry_timeout' : 'cancelled';
         trade.entryOrderStatus = reason === 'entry_timeout' ? 'timeout' : 'cancelled';
         trade.exitTime         = new Date();
+        trade.durationSeconds  = Math.round((trade.exitTime - (trade.entryOrderPlacedAt || trade.entryTime || trade.createdAt)) / 1000);
         await trade.save();
 
         await this._logEvent(trade.userId, 'TRADE_CANCELLED', 'warn',
@@ -175,6 +205,16 @@ class EntryOrderWatcher {
                     trade:  trade.toObject(),
                     reason,
                     mode:   'live',
+                });
+                this.io.to(`user:${trade.userId}`).emit('bot_trade_closed', {
+                    trade:  trade.toObject(),
+                    mode:   'live',
+                    symbol: trade.symbol,
+                });
+                this.io.emit('bot_trade_closed', {
+                    trade:  trade.toObject(),
+                    mode:   'live',
+                    symbol: trade.symbol,
                 });
             } catch (e) { /* ignore */ }
         }

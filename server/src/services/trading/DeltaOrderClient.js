@@ -46,7 +46,7 @@ class DeltaOrderClient {
     async _request(method, path, body = null, params = null) {
         try {
             let signPath = path;
-            if (method.toUpperCase() === 'GET' && params) {
+            if (params && Object.keys(params).length > 0) {
                 const qs = new URLSearchParams(params).toString();
                 if (qs) {
                     signPath += '?' + qs;
@@ -54,9 +54,10 @@ class DeltaOrderClient {
             }
             const { timestamp, signature } = this._sign(method, signPath, body || '');
             const headers = {
-                'api-key':   this.apiKey,
-                'timestamp': timestamp,
-                'signature': signature,
+                'api-key':      this.apiKey,
+                'timestamp':    timestamp,
+                'signature':    signature,
+                'Content-Type': 'application/json',
             };
             const response = await this.http.request({
                 method,
@@ -175,17 +176,23 @@ class DeltaOrderClient {
         if (!prod) {
             throw new Error(`Product metadata not found for symbol: ${symbol}`);
         }
-        return this._request('DELETE', '/v2/orders', null, {
-            id: orderId.toString(),
-            product_id: prod.id,
-        });
+        const numericOrderId = Number(orderId);
+        const numericProductId = Number(prod.id);
+        const body = {
+            id: !isNaN(numericOrderId) ? numericOrderId : orderId,
+            product_id: !isNaN(numericProductId) ? numericProductId : prod.id,
+        };
+        return this._request('DELETE', '/v2/orders', body);
     }
 
     /**
      * Cancel all orders for a symbol.
      */
     async cancelAllOrders(symbol) {
-        return this._request('DELETE', '/v2/orders/all', null, { product_symbol: symbol });
+        const productCatalog = require('../ProductCatalog');
+        const prod = symbol ? productCatalog.getBySymbol(symbol) : null;
+        const body = prod?.id ? { product_id: Number(prod.id) } : {};
+        return this._request('DELETE', '/v2/orders/all', body);
     }
 
     /**

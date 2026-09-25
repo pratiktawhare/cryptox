@@ -31,6 +31,7 @@ const positionTracker     = require('./services/trading/PositionTracker');
 const paperEngine         = require('./services/trading/PaperTradingEngine');
 const orderExecutor       = require('./services/trading/OrderExecutor');
 const { paperBot, liveBot } = require('./services/bot/TradingBot');
+const entryOrderWatcher    = require('./services/bot/EntryOrderWatcher');
 const TradingConfig       = require('./models/TradingConfig');
 const cron                = require('node-cron');
 const User                = require('./models/User');
@@ -163,6 +164,9 @@ async function start() {
     app.set('paperTradingBot', paperBot);
     app.set('liveTradingBot', liveBot);
 
+    // 8.5. Start EntryOrderWatcher — constantly monitor and timeout unfilled limit entry orders (15 min)
+    entryOrderWatcher.start(io);
+
     // 9. Daily summary cron — fires at midnight every day
     cron.schedule('0 0 * * *', async () => {
         try {
@@ -209,6 +213,7 @@ function shutdown(signal) {
     automationEngine.stopMode('live');
     paperBot.stop();
     liveBot.stop();
+    entryOrderWatcher.stop();
     positionTracker.stop();
     paperEngine.stop();
     productCatalog.destroy();

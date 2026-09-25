@@ -123,7 +123,6 @@ class TradingBot {
         }
         this._nextScanAt = null;
         aiRegimeAnalyzer.stop();
-        entryOrderWatcher.stop();
         console.log(`[TradingBot] ⏹️ ${this.mode.toUpperCase()} Bot stopped`);
         this._emitStatus();
     }
