@@ -24,16 +24,18 @@ const POLL_INTERVAL_MS = 10_000;          // 10 seconds
 
 class EntryOrderWatcher {
     constructor() {
-        this.io      = null;
-        this._timer  = null;
-        this._busy   = false;
+        this.io        = null;
+        this.wsManager = null;
+        this._timer    = null;
+        this._busy     = false;
     }
 
     // ── Lifecycle ───────────────────────────────────────────────────────────────
 
-    start(io = null) {
+    start(io = null, wsManager = null) {
+        if (io) this.io = io;
+        if (wsManager) this.wsManager = wsManager;
         if (this._timer) return;
-        this.io     = io;
         this._timer = setInterval(() => this._tick(), POLL_INTERVAL_MS);
         console.log(`[EntryOrderWatcher] ⏳ Started — checking pending entries every ${POLL_INTERVAL_MS / 1000}s (timeout: ${ENTRY_TIMEOUT_MS / 60000} min)`);
     }
@@ -53,7 +55,7 @@ class EntryOrderWatcher {
         this._busy = true;
 
         try {
-            const pendingTrades = await BotTrade.find({ mode: 'live', result: 'pending_entry' });
+            const pendingTrades = await BotTrade.find({ result: 'pending_entry' });
             if (!pendingTrades || pendingTrades.length === 0) return;
 
             for (const trade of pendingTrades) {
@@ -73,6 +75,49 @@ class EntryOrderWatcher {
     // ── Per-Trade Logic ─────────────────────────────────────────────────────────
 
     async _checkPendingTrade(trade) {
+        if (trade.mode === 'paper') {
+            await this._checkPaperPendingTrade(trade);
+        } else {
+            await this._checkLivePendingTrade(trade);
+        }
+    }
+
+    // ── Paper Mode Pending Entry Check ──────────────────────────────────────────
+
+    async _checkPaperPendingTrade(trade) {
+        // 1. Check 15-Minute Timeout
+        const elapsedMs = Date.now() - new Date(trade.entryOrderPlacedAt || trade.entryTime || trade.createdAt).getTime();
+        if (elapsedMs >= ENTRY_TIMEOUT_MS) {
+            console.log(`[EntryOrderWatcher] ⏰ [Paper] Resting limit order timed out after ${Math.round(elapsedMs / 60000)} min for ${trade.symbol}. Cancelling order and refunding margin.`);
+            await this._markCancelled(trade, 'entry_timeout');
+            return;
+        }
+
+        // 2. Get Live Market Price
+        const currentPrice = this._getPrice(trade.symbol);
+        if (!currentPrice || currentPrice <= 0) {
+            return; // No price data available yet, wait for next tick
+        }
+
+        // 3. Check Pullback Fill Condition
+        // Long limit: resting below market, filled when price pulls down to or below limit
+        // Short limit: resting above market, filled when price rallies up to or above limit
+        const isFilled = (trade.direction === 'long' && currentPrice <= trade.entryPrice) ||
+                         (trade.direction === 'short' && currentPrice >= trade.entryPrice);
+
+        if (isFilled) {
+            console.log(`[EntryOrderWatcher] ✅ [Paper] Limit entry touched for ${trade.direction.toUpperCase()} ${trade.symbol}! Market: $${currentPrice}, Limit: $${trade.entryPrice}. Activating trade.`);
+            await executionEngine._activatePaperTrade({
+                trade,
+                fillPrice: trade.entryPrice,
+                io: this.io,
+            });
+        }
+    }
+
+    // ── Live Mode Pending Entry Check ───────────────────────────────────────────
+
+    async _checkLivePendingTrade(trade) {
         const orderId = trade.pendingEntryOrderId || trade.entryOrderId;
         if (!orderId) {
             await this._markCancelled(trade, 'missing_order_id');
@@ -168,23 +213,43 @@ class EntryOrderWatcher {
                     }
                 } catch (checkErr) { /* ignore */ }
 
-                await this._logEvent(trade.userId, 'ENTRY_ORDER_CANCEL_WARN', 'warn',
+                await this._logEvent(trade.userId, 'live', 'ORDER_CANCELLED', 'warn',
                     `Cancel attempt for timed-out order ${orderId} returned: ${cancelErr.message}`,
                     { orderId, symbol: trade.symbol }
                 );
             }
 
-            await this._logEvent(trade.userId, 'ENTRY_ORDER_CANCELLED', 'warn',
+            await this._logEvent(trade.userId, 'live', 'ORDER_TIMEOUT', 'warn',
                 `[Live] Limit entry order ${orderId} for ${trade.symbol} cancelled after 15 min timeout. No fill received.`,
                 { orderId, symbol: trade.symbol, elapsedMs }
             );
 
             await this._markCancelled(trade, 'entry_timeout');
         }
-        // else: still within 15 min and still open — do nothing, retry next tick
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────────
+
+    _getPrice(symbol) {
+        let currentPrice = null;
+        if (this.wsManager?.getPrice) {
+            const p = this.wsManager.getPrice(symbol);
+            if (p && p > 0) currentPrice = p;
+        }
+        if (!currentPrice && this.wsManager?.getTicker) {
+            const ticker = this.wsManager.getTicker(symbol);
+            if (ticker?.mark_price) currentPrice = parseFloat(ticker.mark_price);
+            else if (ticker?.close) currentPrice = parseFloat(ticker.close);
+        }
+        if (!currentPrice) {
+            try {
+                const candleStore = require('../CandleStore');
+                const lastCandle = candleStore.getLastCandle(symbol, '1m') || candleStore.getLastCandle(symbol, '5m');
+                if (lastCandle?.close) currentPrice = lastCandle.close;
+            } catch (e) { /* ignore */ }
+        }
+        return currentPrice;
+    }
 
     async _markCancelled(trade, reason) {
         trade.result           = 'cancelled';
@@ -194,9 +259,26 @@ class EntryOrderWatcher {
         trade.durationSeconds  = Math.round((trade.exitTime - (trade.entryOrderPlacedAt || trade.entryTime || trade.createdAt)) / 1000);
         await trade.save();
 
-        await this._logEvent(trade.userId, 'TRADE_CANCELLED', 'warn',
-            `[Live] Pending entry for ${trade.symbol} cancelled: ${reason}`,
-            { tradeId: trade._id, symbol: trade.symbol, reason }
+        let wallet = null;
+        if (trade.mode === 'paper') {
+            try {
+                const PaperWallet = require('../../models/PaperWallet');
+                wallet = await PaperWallet.findOne({ userId: trade.userId });
+                if (wallet) {
+                    wallet.available += trade.margin;
+                    wallet.used = Math.max(0, wallet.used - trade.margin);
+                    await wallet.save();
+                }
+            } catch (wErr) {
+                console.error(`[EntryOrderWatcher] Error refunding paper margin for trade ${trade._id}:`, wErr.message);
+            }
+        }
+
+        const modeTag = trade.mode === 'paper' ? '[Paper]' : '[Live]';
+        const eventType = reason === 'entry_timeout' ? 'ORDER_TIMEOUT' : 'ORDER_CANCELLED';
+        await this._logEvent(trade.userId, trade.mode, eventType, 'warn',
+            `${modeTag} Pending entry for ${trade.symbol} cancelled: ${reason}${trade.mode === 'paper' ? ` (Margin $${trade.margin.toFixed(2)} refunded)` : ''}`,
+            { tradeId: trade._id, symbol: trade.symbol, reason, margin: trade.margin }
         );
 
         if (this.io) {
@@ -204,18 +286,24 @@ class EntryOrderWatcher {
                 this.io.to(`user:${trade.userId}`).emit('bot_trade_cancelled', {
                     trade:  trade.toObject(),
                     reason,
-                    mode:   'live',
+                    mode:   trade.mode,
                 });
                 this.io.to(`user:${trade.userId}`).emit('bot_trade_closed', {
                     trade:  trade.toObject(),
-                    mode:   'live',
+                    mode:   trade.mode,
                     symbol: trade.symbol,
                 });
                 this.io.emit('bot_trade_closed', {
                     trade:  trade.toObject(),
-                    mode:   'live',
+                    mode:   trade.mode,
                     symbol: trade.symbol,
                 });
+                if (wallet) {
+                    this.io.to(`user:${trade.userId}`).emit('bot_wallet_updated', {
+                        wallet: wallet.toObject(),
+                        mode:   'paper',
+                    });
+                }
             } catch (e) { /* ignore */ }
         }
     }
@@ -233,11 +321,11 @@ class EntryOrderWatcher {
         }
     }
 
-    async _logEvent(userId, type, severity, message, metadata = {}) {
+    async _logEvent(userId, mode = 'live', type, severity, message, metadata = {}) {
         try {
             await BotEvent.create({
                 userId,
-                mode: 'live',
+                mode,
                 type,
                 severity,
                 message,

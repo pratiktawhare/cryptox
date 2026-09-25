@@ -134,9 +134,14 @@ function scoreDirection(direction, snapshot, regimeResult) {
         conditions.shortTermEma = false;
     }
 
-    // ── Condition 7: 1m momentum ─────────────────────────────────────────────
+    // ── Condition 7: 1m momentum / absorption ────────────────────────────────
+    // Confirms momentum is either accelerating OR buyers/sellers are actively absorbing the retest (wick rejection)
     if (tf1.momentum !== null) {
-        const pass = isMomentumConfirming(tf1.momentum, direction, SCORE_CONFIG.MOMENTUM_THRESHOLD);
+        const standardMom = isMomentumConfirming(tf1.momentum, direction, SCORE_CONFIG.MOMENTUM_THRESHOLD);
+        const absorptionWick = isLong
+            ? (tf1.lowerWickRatio != null && tf1.lowerWickRatio >= 0.20)
+            : (tf1.upperWickRatio != null && tf1.upperWickRatio >= 0.20);
+        const pass = standardMom || absorptionWick;
         conditions.momentum = pass;
         if (pass) score++;
     } else {

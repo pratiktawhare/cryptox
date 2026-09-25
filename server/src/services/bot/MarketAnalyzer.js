@@ -37,29 +37,36 @@ function analyzeSymbol(symbol, wsManager) {
     if (candles5m.length < 25 || candles1m.length < 22) return null;
 
     // ── Extract arrays ──────────────────────────────────────────────────────
-    const closes5m  = candles5m.map(c => c.close);
-    const highs5m   = candles5m.map(c => c.high);
-    const lows5m    = candles5m.map(c => c.low);
-    const volumes5m = candles5m.map(c => c.volume);
+    // Confirmed completed candles: candles5m.slice(0, -1) to avoid intra-candle phantom wicks.
+    // If not enough completed candles, fallback to full array.
+    const closedCandles5m = candles5m.length > 25 ? candles5m.slice(0, -1) : candles5m;
+    const closedCloses5m  = closedCandles5m.map(c => c.close);
+    const closedHighs5m   = closedCandles5m.map(c => c.high);
+    const closedLows5m    = closedCandles5m.map(c => c.low);
+    const closedVolumes5m = closedCandles5m.map(c => c.volume);
 
-    const closes1m  = candles1m.map(c => c.close);
+    // Live price from ticker or latest ticking bar
+    let livePrice = candles5m[candles5m.length - 1].close;
+    if (wsManager?.getPrice) {
+        const p = wsManager.getPrice(sym);
+        if (p && p > 0) livePrice = p;
+    }
+    const currentClose = livePrice;
 
-    const currentClose = closes5m[closes5m.length - 1];
-
-    // ── 5m Indicators ───────────────────────────────────────────────────────
-    const ema9_5m       = calcEMA(closes5m, 9);
-    const ema21_5m      = calcEMA(closes5m, 21);
-    const ema21Slope_5m = calcEMASlope(closes5m, 21);
-    const rsi_5m        = calcRSI(closes5m, 14);
-    const atr_5m        = calcATR(highs5m, lows5m, closes5m, 14);
-    const atrPct_5m     = calcATRPercent(highs5m, lows5m, closes5m, 14);
-    const volumeRatio   = calcVolumeRatio(volumes5m, 20);
+    // ── 5m Indicators (computed on confirmed CLOSED candles) ────────────────
+    const ema9_5m       = calcEMA(closedCloses5m, 9);
+    const ema21_5m      = calcEMA(closedCloses5m, 21);
+    const ema21Slope_5m = calcEMASlope(closedCloses5m, 21);
+    const rsi_5m        = calcRSI(closedCloses5m, 14);
+    const atr_5m        = calcATR(closedHighs5m, closedLows5m, closedCloses5m, 14);
+    const atrPct_5m     = calcATRPercent(closedHighs5m, closedLows5m, closedCloses5m, 14);
+    const volumeRatio   = calcVolumeRatio(closedVolumes5m, 20);
 
     // RSI slope: current RSI minus RSI computed without the last candle → detects momentum deceleration
-    const rsiPrev_5m   = candles5m.length > 16 ? calcRSI(closes5m.slice(0, -1), 14) : null;
+    const rsiPrev_5m   = closedCandles5m.length > 16 ? calcRSI(closedCloses5m.slice(0, -1), 14) : null;
     const rsiSlope_5m  = (rsi_5m !== null && rsiPrev_5m !== null) ? (rsi_5m - rsiPrev_5m) : null;
 
-    // Stretch ratio: how many ATRs the close is from EMA21 → measures overextension
+    // Stretch ratio: how many ATRs the live close is from EMA21 → measures overextension
     const stretchRatio_5m = (atr_5m !== null && atr_5m > 0 && ema21_5m !== null)
         ? Math.abs(currentClose - ema21_5m) / atr_5m
         : null;
@@ -70,6 +77,14 @@ function analyzeSymbol(symbol, wsManager) {
     const ema21_1m      = calcEMA(closes1mFull, 21);
     const rsi_1m        = calcRSI(closes1mFull, 14);
     const momentum_1m   = calcMomentum(closes1mFull, 5);
+
+    // 1m wick absorption ratio (detects buyer/seller absorption on pullbacks)
+    const last1m = candles1m[candles1m.length - 1];
+    const range1m = Math.max(last1m.high - last1m.low, 0.000001);
+    const lowerWick1m = Math.max(0, Math.min(last1m.open, last1m.close) - last1m.low);
+    const upperWick1m = Math.max(0, last1m.high - Math.max(last1m.open, last1m.close));
+    const lowerWickRatio1m = lowerWick1m / range1m;
+    const upperWickRatio1m = upperWick1m / range1m;
 
     // ── Spread (from live ticker) ────────────────────────────────────────────
     // Delta's WebSocket ticker doesn't always have bid/ask separately.
@@ -115,15 +130,18 @@ function analyzeSymbol(symbol, wsManager) {
             stretchRatio: stretchRatio_5m, // |close - EMA21| / ATR — overextension gauge
             volumeRatio: volumeRatio,
             close:       currentClose,
+            closedClose: closedCloses5m[closedCloses5m.length - 1],
         },
 
         // 1m timeframe
         '1m': {
-            ema9:     ema9_1m,
-            ema21:    ema21_1m,
-            rsi:      rsi_1m,
-            momentum: momentum_1m,
-            close:    closes1mFull[closes1mFull.length - 1],
+            ema9:            ema9_1m,
+            ema21:           ema21_1m,
+            rsi:             rsi_1m,
+            momentum:        momentum_1m,
+            lowerWickRatio:  lowerWickRatio1m,
+            upperWickRatio:  upperWickRatio1m,
+            close:           closes1mFull[closes1mFull.length - 1],
         },
     };
 }

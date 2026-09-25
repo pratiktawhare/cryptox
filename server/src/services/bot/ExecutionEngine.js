@@ -227,14 +227,89 @@ class ExecutionEngine {
             orderType,
         } = params;
 
+        // Check PaperWallet has enough available margin
+        let wallet = await PaperWallet.findOne({ userId });
+        if (!wallet) {
+            wallet = await PaperWallet.create({ userId });
+        }
+
+        if (wallet.available < margin) {
+            const msg = `Insufficient paper margin: need $${margin.toFixed(2)}, available $${wallet.available.toFixed(2)}`;
+            await this._logEvent(userId, 'paper', 'TRADE_REJECTED', 'warn', msg, { margin, available: wallet.available });
+            return { success: false, reason: 'insufficient_paper_margin' };
+        }
+
         // Get fresh ticker price if available
-        let fillPrice = entryPrice;
+        let livePrice = entryPrice;
         if (wsManager?.getPrice) {
-            const livePrice = wsManager.getPrice(symbol);
-            if (livePrice && livePrice > 0) {
-                fillPrice = livePrice;
+            const lp = wsManager.getPrice(symbol);
+            if (lp && lp > 0) {
+                livePrice = lp;
             }
         }
+
+        // Determine if limit order is marketable right now
+        // For Long: marketable if current market price is at or below limit entry
+        // For Short: marketable if current market price is at or above limit entry
+        const isMarketable = (orderType !== 'limit_order') ||
+            (direction === 'long' && livePrice <= entryPrice) ||
+            (direction === 'short' && livePrice >= entryPrice);
+
+        if (!isMarketable) {
+            // ── Resting Limit Order (Pending Entry) ──────────────────────────
+            // Lock margin in PaperWallet so balance is reserved
+            wallet.available -= margin;
+            wallet.used += margin;
+            await wallet.save();
+
+            const trade = await BotTrade.create({
+                userId,
+                mode: 'paper',
+                symbol,
+                direction,
+                entryPrice,
+                stopLoss,
+                stopLossTrigger,
+                takeProfit,
+                takeProfitTrigger,
+                quantity,
+                contractValue: parseFloat((productSpec || productCatalog.getBySymbol(symbol))?.contract_value || 1),
+                leverage,
+                margin,
+                fees: 0,
+                slippage: 0,
+                entryTime: new Date(),
+                result: 'pending_entry',
+                entryOrderStatus: 'pending',
+                entryOrderPlacedAt: new Date(),
+                signalScore,
+                regime,
+                walletBalanceAtEntry: walletBalanceAtEntry || wallet.balance,
+                effectiveBudgetAtEntry: effectiveBudgetAtEntry || Math.min(wallet.balance, 10),
+                reverseMode: Boolean(params.reverseMode),
+            });
+
+            await this._logEvent(userId, 'paper', 'ORDER_SUBMITTED', 'info',
+                `[Paper] Resting limit order placed for ${direction.toUpperCase()} ${quantity} ${symbol} @ $${entryPrice} (Live: $${livePrice}, awaiting pullback)`,
+                { tradeId: trade._id, symbol, direction, quantity, entryPrice, currentPrice: livePrice, orderType: 'limit_order' }
+            );
+
+            this._emit(io, userId, 'bot_trade_opened', {
+                trade: trade.toObject(),
+                wallet: wallet.toObject(),
+                mode: 'paper',
+            });
+
+            console.log(`[ExecutionEngine] ⏳ [Paper] Placed resting limit ${direction.toUpperCase()} ${quantity} ${symbol} @ $${entryPrice} (Live: $${livePrice}). Status: pending_entry`);
+            return {
+                success: true,
+                pending: true,
+                trade: trade.toObject(),
+                wallet: wallet.toObject(),
+            };
+        }
+
+        let fillPrice = livePrice;
 
         // ── Re-anchor SL/TP to actual fill price ──────────────────────────────
         // RiskEngine computes SL/TP as offsets from entryPrice (snapshot.close).
@@ -260,18 +335,6 @@ class ExecutionEngine {
             if (stopLossTrigger)   adjStopLossTrigger   = roundToTick(stopLossTrigger   + priceDelta, tickSize);
             if (takeProfitTrigger) adjTakeProfitTrigger = roundToTick(takeProfitTrigger + priceDelta, tickSize);
             console.log(`[ExecutionEngine] 📍 Adjusted SL/TP for price slippage: entry $${entryPrice} → fill $${fillPrice} (Δ${priceDelta > 0 ? '+' : ''}${priceDelta.toFixed(4)}). New SL=$${adjStopLoss} (trig $${adjStopLossTrigger}), TP=$${adjTakeProfit} (trig $${adjTakeProfitTrigger})`);
-        }
-
-        // Check PaperWallet has enough available margin
-        let wallet = await PaperWallet.findOne({ userId });
-        if (!wallet) {
-            wallet = await PaperWallet.create({ userId });
-        }
-
-        if (wallet.available < margin) {
-            const msg = `Insufficient paper margin: need $${margin.toFixed(2)}, available $${wallet.available.toFixed(2)}`;
-            await this._logEvent(userId, 'paper', 'TRADE_REJECTED', 'warn', msg, { margin, available: wallet.available });
-            return { success: false, reason: 'insufficient_paper_margin' };
         }
 
         // Calculate estimated fees via CostEngine
@@ -578,6 +641,82 @@ class ExecutionEngine {
 
         console.log(`[ExecutionEngine] 💰 [Live] Opened ${direction.toUpperCase()} ${actualFilledSize} ${symbol} @ $${actualFillPrice}`);
         return { success: true, trade: trade?.toObject() };
+    }
+
+    /**
+     * Activates a pending paper trade once the market has pulled back and touched the limit price.
+     */
+    async _activatePaperTrade({ trade, fillPrice, io }) {
+        const productCatalog = require('../ProductCatalog');
+        const spec = productCatalog.getBySymbol(trade.symbol);
+        const contractValue = parseFloat(spec?.contract_value || trade.contractValue || 1);
+        const leverage = trade.leverage || 20;
+        const side = trade.direction === 'long' ? 'buy' : 'sell';
+
+        const liqPrice = side === 'buy'
+            ? fillPrice * (1 - 1 / leverage)
+            : fillPrice * (1 + 1 / leverage);
+
+        // 1. Create PaperPosition document
+        const position = await PaperPosition.create({
+            userId: trade.userId,
+            symbol: trade.symbol,
+            side,
+            size: trade.quantity,
+            contractValue,
+            entryPrice: fillPrice,
+            leverage,
+            stopLoss: trade.stopLoss,
+            takeProfit: trade.takeProfit,
+            marginUsed: trade.margin,
+            markPrice: fillPrice,
+            unrealisedPnl: 0,
+            roe: 0,
+            liquidationPrice: liqPrice,
+            source: 'automation',
+            reverseMode: Boolean(trade.reverseMode),
+            status: 'open',
+            tradeHistoryId: trade._id,
+        });
+
+        // 2. Update BotTrade to open
+        trade.result = 'open';
+        trade.entryOrderStatus = 'filled';
+        trade.entryTime = new Date();
+        trade.entryPrice = fillPrice;
+        await trade.save();
+
+        // 3. Log audit events
+        await this._logEvent(trade.userId, 'paper', 'ORDER_FILLED', 'info',
+            `[Paper] Limit order filled on pullback for ${trade.direction.toUpperCase()} ${trade.quantity} ${trade.symbol} @ $${fillPrice}`,
+            { tradeId: trade._id, fillPrice }
+        );
+        await this._logEvent(trade.userId, 'paper', 'TP_PLACED', 'info',
+            `[Paper] Take profit target placed at $${trade.takeProfit}`,
+            { tradeId: trade._id, takeProfit: trade.takeProfit }
+        );
+        await this._logEvent(trade.userId, 'paper', 'SL_PLACED', 'info',
+            `[Paper] Stop loss protection placed at $${trade.stopLoss}`,
+            { tradeId: trade._id, stopLoss: trade.stopLoss }
+        );
+        await this._logEvent(trade.userId, 'paper', 'POSITION_OPENED', 'info',
+            `[Paper] Position opened on pullback: ${trade.direction.toUpperCase()} ${trade.quantity} ${trade.symbol} @ $${fillPrice} (Margin: $${trade.margin.toFixed(2)})`,
+            { tradeId: trade._id, positionId: position._id, margin: trade.margin, leverage }
+        );
+
+        // 4. Emit Socket.IO events
+        this._emit(io, trade.userId, 'bot_trade_opened', {
+            trade: trade.toObject(),
+            position: position.toObject(),
+            mode: 'paper',
+        });
+        this._emit(io, trade.userId, 'bot_position_updated', {
+            position: position.toObject(),
+            mode: 'paper',
+        });
+
+        console.log(`[ExecutionEngine] ✅ [Paper] Activated pullback trade ${trade.direction.toUpperCase()} ${trade.symbol} @ $${fillPrice}`);
+        return { success: true, trade: trade.toObject(), position: position.toObject() };
     }
 
     // ─── Emergency Close ───────────────────────────────────────────────────────

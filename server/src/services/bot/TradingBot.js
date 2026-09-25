@@ -89,8 +89,8 @@ class TradingBot {
         // Start position monitor if not already running
         positionMonitor.start(this.io, this.wsManager);
 
-        // Start entry order watcher (monitors pending live limit orders)
-        entryOrderWatcher.start(this.io);
+        // Start entry order watcher (monitors pending paper & live limit orders)
+        entryOrderWatcher.start(this.io, this.wsManager);
 
         // Start AI regime analyzer
         aiRegimeAnalyzer.start(this.wsManager);
@@ -649,42 +649,47 @@ class TradingBot {
             console.log(`[TradingBot] 🔄 REVERSE MODE ACTIVE: Inverting signal ${best.scoreResult.direction?.toUpperCase()} → ${tradeDirection.toUpperCase()} on ${best.symbol} (fading rally/dump)`);
         }
 
-        // ── Layer 3: Smart pullback entry pricing ─────────────────────────────
-        // Instead of always entering at the close (rally top), graduate the entry
-        // price toward EMA9 based on how overextended price is from EMA21.
-        //
-        //  stretchRatio ≤ 0.6 → price is near EMA21, enter at close (normal)
-        //  stretchRatio 0.6–1.5 → slide entry toward EMA9 proportionally
-        //  stretchRatio > 1.5  → already hard-rejected by Layer 1 (OVEREXTENDED)
-        //
-        // If the pullback to entryPrice doesn't happen within 15 min,
-        // EntryOrderWatcher.js cancels the order automatically.
-        const close5m      = best.snapshot.close;
-        const ema9_5m      = best.snapshot['5m'].ema9;
-        const ema21_5m     = best.snapshot['5m'].ema21;
-        const atr5m        = best.snapshot['5m'].atr;
-        const stretch5m    = best.snapshot['5m'].stretchRatio;
+        // ── Institutional Dynamic Pullback Limit Pricing ───────────────────────
+        // Never chase the impulse climax. Anchor entry to dynamic support (EMA9)
+        // or a 0.30%–0.50% ATR discount level.
+        const currentLivePrice = best.snapshot.close;
+        const ema9_5m          = best.snapshot['5m']?.ema9;
+        const ema21_5m         = best.snapshot['5m']?.ema21;
+        const atr5m            = best.snapshot['5m']?.atr || (currentLivePrice * 0.005);
+        const spec             = this.productCatalog?.getBySymbol(best.symbol) || productCatalog.getBySymbol(best.symbol);
+        const tickSize         = parseFloat(spec?.tick_size || 0.001);
 
-        let smartEntryPrice = close5m;
+        const roundToTick = (p, tick) => {
+            if (!tick || tick <= 0) return p;
+            return parseFloat((Math.round(p / tick) * tick).toFixed(8));
+        };
 
-        if (ema9_5m !== null && atr5m !== null && atr5m > 0 && stretch5m != null && stretch5m > 0.6) {
-            const pullbackRatio = Math.min((stretch5m - 0.6) / 0.9, 1.0); // 0.0 → 1.0
+        let smartEntryPrice = currentLivePrice;
 
-            if (tradeDirection === 'long' && close5m > ema9_5m) {
-                // For long: slide entry price down toward EMA9
-                const gap = close5m - ema9_5m;
-                smartEntryPrice = close5m - (pullbackRatio * gap);
-            } else if (tradeDirection === 'short' && close5m < ema9_5m) {
-                // For short: slide entry price up toward EMA9
-                const gap = ema9_5m - close5m;
-                smartEntryPrice = close5m + (pullbackRatio * gap);
+        if (tradeDirection === 'long') {
+            // For LONG: target the pullback to EMA9 (or at least 0.35 * ATR below current tip)
+            if (ema9_5m && ema9_5m < currentLivePrice) {
+                // If EMA9 is nearby, anchor right at EMA9, capped by max discount of 0.50 * ATR
+                const targetDiscount = Math.max(ema9_5m, currentLivePrice - (atr5m * 0.50));
+                smartEntryPrice = targetDiscount;
+            } else {
+                // Fallback discount: 0.35% below current tip
+                smartEntryPrice = currentLivePrice * 0.9965;
             }
-
-            if (smartEntryPrice !== close5m) {
-                const adjPct = (Math.abs(close5m - smartEntryPrice) / close5m * 100).toFixed(3);
-                console.log(`[TradingBot] 📐 Pullback entry on ${best.symbol}: close=${close5m.toFixed(4)} → entry=${smartEntryPrice.toFixed(4)} (${adjPct}% toward EMA9, stretch=${stretch5m.toFixed(2)}x ATR)`);
+        } else if (tradeDirection === 'short') {
+            // For SHORT: target the pullback to EMA9 resistance
+            if (ema9_5m && ema9_5m > currentLivePrice) {
+                const targetPremium = Math.min(ema9_5m, currentLivePrice + (atr5m * 0.50));
+                smartEntryPrice = targetPremium;
+            } else {
+                // Fallback premium: 0.35% above current dump low
+                smartEntryPrice = currentLivePrice * 1.0035;
             }
         }
+
+        smartEntryPrice = roundToTick(smartEntryPrice, tickSize);
+        const adjPct = (Math.abs(currentLivePrice - smartEntryPrice) / currentLivePrice * 100).toFixed(3);
+        console.log(`[TradingBot] 📐 Institutional Pullback Entry on ${best.symbol}: live=$${currentLivePrice.toFixed(4)} → limit entry=$${smartEntryPrice.toFixed(4)} (${adjPct}% discount @ dynamic support)`);
 
         const riskResult = calcRisk({
             config,
@@ -751,6 +756,7 @@ class TradingBot {
             io: this.io,
             wsManager: this.wsManager,
             reverseMode: isReverse,
+            orderType: 'limit_order',
         });
 
         // Record successful trade signal

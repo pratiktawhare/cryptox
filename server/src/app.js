@@ -165,7 +165,7 @@ async function start() {
     app.set('liveTradingBot', liveBot);
 
     // 8.5. Start EntryOrderWatcher — constantly monitor and timeout unfilled limit entry orders (15 min)
-    entryOrderWatcher.start(io);
+    entryOrderWatcher.start(io, wsManager);
 
     // 9. Daily summary cron — fires at midnight every day
     cron.schedule('0 0 * * *', async () => {
