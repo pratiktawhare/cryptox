@@ -106,6 +106,27 @@ export default function TradingBot() {
     useEffect(() => {
         if (!socket) return;
 
+        const handleTradePending = (payload) => {
+            if (payload?.mode === mode && payload?.trade) {
+                setStatusData(prev => {
+                    if (!prev) return prev;
+                    const prevMode = prev[mode] || {};
+                    const currentOpenTrades = prevMode.openTrades || [];
+                    const updatedOpenTrades = [payload.trade, ...currentOpenTrades.filter(t => t._id !== payload.trade._id)];
+                    return {
+                        ...prev,
+                        [mode]: {
+                            ...prevMode,
+                            openTrade: updatedOpenTrades[0] || null,
+                            openTrades: updatedOpenTrades,
+                        }
+                    };
+                });
+                setTrades(prev => [payload.trade, ...prev.filter(t => t._id !== payload.trade._id)]);
+                fetchBotData();
+            }
+        };
+
         const handleTradeOpened = (payload) => {
             if (payload?.mode === mode) {
                 setStatusData(prev => {
@@ -122,7 +143,7 @@ export default function TradingBot() {
                         }
                     };
                 });
-                setTrades(prev => [payload.trade, ...prev]);
+                setTrades(prev => [payload.trade, ...prev.filter(t => t._id !== payload.trade._id)]);
                 fetchBotData();
             }
         };
@@ -236,6 +257,7 @@ export default function TradingBot() {
             }
         };
 
+        socket.on('bot_trade_pending', handleTradePending);
         socket.on('bot_trade_opened', handleTradeOpened);
         socket.on('bot_trade_closed', handleTradeClosed);
         socket.on('bot_position_updated', handlePositionUpdated);
@@ -249,6 +271,7 @@ export default function TradingBot() {
         socket.on('paper_position_closed', handlePaperWalletUpdate);
 
         return () => {
+            socket.off('bot_trade_pending', handleTradePending);
             socket.off('bot_trade_opened', handleTradeOpened);
             socket.off('bot_trade_closed', handleTradeClosed);
             socket.off('bot_position_updated', handlePositionUpdated);

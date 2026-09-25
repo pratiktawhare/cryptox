@@ -438,6 +438,10 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                                     <strong className="text-crypto-primary">{walletParts} part{walletParts !== 1 ? 's' : ''}</strong>, each trade uses{' '}
                                     <strong className="text-crypto-heading">${(parseFloat(budget || 0) / walletParts).toFixed(2)} margin</strong>{' '}
                                     → <strong className="text-crypto-primary">${((parseFloat(budget || 0) / walletParts) * leverage).toFixed(2)} notional</strong> at {leverage}x leverage.
+                                    <span className="block mt-1 font-semibold text-crypto-primary/90">
+                                        ⚡ Effective max concurrent trades: {Math.min(maxOpenPositions, walletParts)} {Math.min(maxOpenPositions, walletParts) === 1 ? 'trade' : 'trades'}
+                                        {maxOpenPositions > walletParts ? ` (capped by ${walletParts} wallet parts)` : ''}.
+                                    </span>
                                 </div>
                             </div>
                         </div>

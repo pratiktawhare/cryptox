@@ -113,30 +113,34 @@ class ExecutionEngine {
         }
 
         try {
-            // Check if there is already an open trade for this specific symbol
+            // Check if there is already an open or pending trade for this specific symbol
             const existingSameSymbolTrade = await BotTrade.findOne({
                 userId,
                 mode,
                 symbol,
-                result: 'open',
+                result: { $in: ['open', 'pending_entry'] },
             });
 
             if (existingSameSymbolTrade) {
                 await this._logEvent(userId, mode, 'TRADE_REJECTED', 'warn',
-                    `Trade rejected: already an open trade for ${symbol}`,
+                    `Trade rejected: already an active or pending trade for ${symbol}`,
                     { existingTradeId: existingSameSymbolTrade._id, symbol }
                 );
                 return { success: false, reason: 'symbol_position_already_exists' };
             }
 
             // Check if max simultaneous open positions limit has been reached
+            // (Include pending_entry limit orders so we don't exceed the limit while awaiting fill)
             const currentOpenCount = await BotTrade.countDocuments({
                 userId,
                 mode,
-                result: 'open',
+                result: { $in: ['open', 'pending_entry'] },
             });
             const userConfig = await TradingConfig.findOne({ userId, mode });
-            const maxAllowed = userConfig?.maxOpenPositions || 5;
+            const maxAllowed = Math.min(
+                userConfig?.maxOpenPositions > 0 ? userConfig.maxOpenPositions : 5,
+                userConfig?.walletParts > 0 ? userConfig.walletParts : 5
+            );
             if (currentOpenCount >= maxAllowed) {
                 await this._logEvent(userId, mode, 'TRADE_REJECTED', 'warn',
                     `Trade rejected: max simultaneous open positions limit reached (${currentOpenCount}/${maxAllowed})`,

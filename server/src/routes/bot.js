@@ -35,8 +35,8 @@ router.get('/status', async (req, res) => {
         const userId = req.user.id;
 
         const [paperTrades, liveTrades, paperCfg, liveCfg] = await Promise.all([
-            BotTrade.find({ userId, mode: 'paper', result: 'open' }),
-            BotTrade.find({ userId, mode: 'live', result: 'open' }),
+            BotTrade.find({ userId, mode: 'paper', result: { $in: ['open', 'pending_entry'] } }),
+            BotTrade.find({ userId, mode: 'live', result: { $in: ['open', 'pending_entry'] } }),
             TradingConfig.findOne({ userId, mode: 'paper' }),
             TradingConfig.findOne({ userId, mode: 'live' }),
         ]);

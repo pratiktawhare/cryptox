@@ -75,16 +75,23 @@ function calcRisk(params) {
         }
     }
 
-    // ── Step 1: Effective budget ──────────────────────────────────────────────
+    // ── Step 1: Effective budget & Wallet Part Sizing ─────────────────────────
     const budgetUSDT = config.budgetUSDT > 0 ? config.budgetUSDT : 10;
-    const effectiveBudget = Math.min(budgetUSDT, actualAvailableBalance);
+    const walletParts = Math.max(1, config.walletParts || 1);
+    const targetPartMargin = budgetUSDT / walletParts;
 
-    if (effectiveBudget <= 0) {
-        return fail('Effective budget is zero — no available balance');
+    if (actualAvailableBalance <= 0) {
+        return fail('No available balance');
+    }
+
+    // Guard: remaining balance must cover at least 60% of target part margin to avoid dust trades
+    if (actualAvailableBalance < targetPartMargin * 0.60) {
+        return fail(`Insufficient available balance ($${actualAvailableBalance.toFixed(2)}) for target wallet part ($${targetPartMargin.toFixed(2)})`);
     }
 
     // ── Step 2: Risk amount per trade ─────────────────────────────────────────
     const riskPct = config.riskPerTradePct > 0 ? config.riskPerTradePct : 5;
+    const effectiveBudget = Math.min(budgetUSDT, actualAvailableBalance);
     const riskAmt = effectiveBudget * (riskPct / 100);
 
     // ── Step 3: ATR guard ─────────────────────────────────────────────────────
@@ -101,27 +108,19 @@ function calcRisk(params) {
     // Maximum contracts affordable within real available balance at this leverage
     const maxQtyFromBalance = Math.floor((actualAvailableBalance * leverage) / (contractValue * entryPrice));
 
-    let qty;
-    const walletParts = config.walletParts > 0 ? config.walletParts : 2;
-
-    if (walletParts) {
-        // Divide wallet balance into N parts:
-        // Target Margin per trade = effectiveBudget / walletParts
-        // Target Notional per trade = targetMargin * leverage
-        // E.g. $10 budget / 2 parts = ~$5 margin * 20x leverage = ~$100 overall trade
-        const targetMargin   = effectiveBudget / walletParts;
-        const targetNotional = targetMargin * leverage;
-        const rawQtyFromParts = Math.round(targetNotional / (contractValue * entryPrice));
-
-        qty = Math.min(Math.max(minQty, rawQtyFromParts), maxQtyFromBalance);
-    } else {
-        // Fallback: budget-based sizing
-        const maxQtyFromBudget = Math.floor((effectiveBudget * leverage) / (contractValue * entryPrice));
-        qty = Math.min(maxQtyFromBudget, maxQtyFromBalance);
-        if (qty < minQty && maxQtyFromBudget >= minQty) {
-            qty = minQty;
-        }
+    // Check minimum contract margin requirement against wallet part
+    const minContractMargin = (minQty * contractValue * entryPrice) / leverage;
+    if (minContractMargin > targetPartMargin * 1.30) {
+        return fail(`Coin minimum order ($${minContractMargin.toFixed(2)} margin) exceeds wallet part budget ($${targetPartMargin.toFixed(2)})`);
     }
+
+    // Target Margin per trade = equal fraction of configured budget (budgetUSDT / walletParts)
+    // Capped by actual available balance
+    const targetMargin = Math.min(targetPartMargin, actualAvailableBalance);
+    const targetNotional = targetMargin * leverage;
+    const rawQtyFromParts = Math.round(targetNotional / (contractValue * entryPrice));
+
+    let qty = Math.min(Math.max(minQty, rawQtyFromParts), maxQtyFromBalance);
 
     if (qty < minQty) {
         return fail(`Budget insufficient for minimum contract size (${minQty} contracts require $${((minQty * contractValue * entryPrice) / leverage).toFixed(2)} margin)`);

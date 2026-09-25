@@ -14,14 +14,15 @@ function SinglePositionCard({ trade, currentPrice, onCloseTrade, navigate }) {
         }
     };
 
+    const isPending = trade.result === 'pending_entry';
     const isLong = trade.direction === 'long';
     const markPrice = currentPrice || trade.markPrice || trade.entryPrice;
     const priceDiff = isLong ? (markPrice - trade.entryPrice) : (trade.entryPrice - markPrice);
     const contractVal = trade.contractValue || 1;
-    const estGrossPnl = priceDiff * (trade.quantity || 0) * contractVal;
-    const estExitFee = markPrice * (trade.quantity || 0) * contractVal * (0.0005 * 1.18);
-    const estNetPnl = estGrossPnl - (trade.fees || 0) - estExitFee;
-    const pnlPct = trade.margin > 0 ? (estNetPnl / trade.margin) * 100 : 0;
+    const estGrossPnl = isPending ? 0 : priceDiff * (trade.quantity || 0) * contractVal;
+    const estExitFee = isPending ? 0 : markPrice * (trade.quantity || 0) * contractVal * (0.0005 * 1.18);
+    const estNetPnl = isPending ? 0 : estGrossPnl - (trade.fees || 0) - estExitFee;
+    const pnlPct = (!isPending && trade.margin > 0) ? (estNetPnl / trade.margin) * 100 : 0;
     const isWin = estNetPnl >= 0;
 
     // Visual Bracket Bar Math
@@ -42,19 +43,21 @@ function SinglePositionCard({ trade, currentPrice, onCloseTrade, navigate }) {
         <div className="bg-crypto-card border border-crypto-border rounded-2xl p-5 md:p-6 shadow-xl relative overflow-hidden">
             {/* Subtle side glow */}
             <div className={`absolute top-0 right-0 w-48 h-48 rounded-full blur-3xl opacity-10 pointer-events-none ${
-                isLong ? 'bg-emerald-500' : 'bg-rose-500'
+                isPending ? 'bg-amber-500' : (isLong ? 'bg-emerald-500' : 'bg-rose-500')
             }`} />
 
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-crypto-border/60">
                 {/* Left: Coin, Direction, Leverage */}
                 <div className="flex items-center gap-3">
                     <div className={`px-2.5 py-1 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 border ${
-                        isLong
-                            ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                            : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                        isPending
+                            ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                            : isLong
+                                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                                : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
                     }`}>
-                        <span className={`w-2 h-2 rounded-full ${isLong ? 'bg-emerald-400' : 'bg-rose-400'} animate-pulse`} />
-                        {trade.direction.toUpperCase()}
+                        <span className={`w-2 h-2 rounded-full ${isPending ? 'bg-amber-400 animate-ping' : (isLong ? 'bg-emerald-400' : 'bg-rose-400')} animate-pulse`} />
+                        {isPending ? '⏳ PENDING ENTRY' : trade.direction.toUpperCase()}
                     </div>
 
                     <div>
@@ -63,11 +66,11 @@ function SinglePositionCard({ trade, currentPrice, onCloseTrade, navigate }) {
                                 {trade.symbol.replace('USD', '/USD')}
                             </h2>
                             <span className="text-xs font-bold text-crypto-muted">
-                                · {trade.leverage || 20}x Margin
+                                · {trade.leverage || 20}x {isPending ? 'Limit Order' : 'Margin'}
                             </span>
                         </div>
                         <p className="text-[11px] text-crypto-muted">
-                            Opened {new Date(trade.openedAt || trade.entryTime || trade.createdAt || Date.now()).toLocaleTimeString()} · {trade.quantity} contracts (${(trade.margin || 0).toFixed(2)} margin)
+                            {isPending ? 'Placed ' : 'Opened '}{new Date(trade.openedAt || trade.entryTime || trade.createdAt || Date.now()).toLocaleTimeString()} · {trade.quantity} contracts (${(trade.margin || 0).toFixed(2)} margin)
                         </p>
                     </div>
                 </div>
@@ -76,26 +79,35 @@ function SinglePositionCard({ trade, currentPrice, onCloseTrade, navigate }) {
                 <div className="flex items-center gap-4 flex-wrap">
                     <div className="text-right">
                         <div className="text-[10px] uppercase font-bold tracking-wider text-crypto-muted">
-                            Net Unrealized PnL
+                            {isPending ? 'Order Status' : 'Net Unrealized PnL'}
                         </div>
-                        <div className={`text-xl font-black tabular-nums tracking-tight ${
-                            isWin ? 'text-crypto-success' : 'text-crypto-danger'
-                        }`}>
-                            {isWin ? '+' : ''}${estNetPnl.toFixed(2)}
-                            <span className="text-xs font-bold ml-1.5 opacity-90">
-                                ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%)
-                            </span>
-                        </div>
-                        {pnlPct <= -20 && (
-                            <div className="text-[10px] font-bold text-rose-400 mt-0.5 flex items-center justify-end gap-1">
-                                <span>🛡️ Drawdown &gt; 20%</span>
+                        {isPending ? (
+                            <div className="text-base font-black text-amber-400 tracking-tight flex items-center justify-end gap-1.5 mt-0.5">
+                                <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                                Awaiting Fill @ ${Number(trade.entryPrice).toFixed(4)}
                             </div>
+                        ) : (
+                            <>
+                                <div className={`text-xl font-black tabular-nums tracking-tight ${
+                                    isWin ? 'text-crypto-success' : 'text-crypto-danger'
+                                }`}>
+                                    {isWin ? '+' : ''}${estNetPnl.toFixed(2)}
+                                    <span className="text-xs font-bold ml-1.5 opacity-90">
+                                        ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%)
+                                    </span>
+                                </div>
+                                {pnlPct <= -20 && (
+                                    <div className="text-[10px] font-bold text-rose-400 mt-0.5 flex items-center justify-end gap-1">
+                                        <span>🛡️ Drawdown &gt; 20%</span>
+                                    </div>
+                                )}
+                                <div className={`text-xs font-bold tabular-nums mt-0.5 ${
+                                    isWin ? 'text-crypto-success' : 'text-crypto-danger'
+                                }`}>
+                                    ≈ {isWin ? '+' : '-'}₹{(Math.abs(estNetPnl) * 85).toFixed(2)}
+                                </div>
+                            </>
                         )}
-                        <div className={`text-xs font-bold tabular-nums mt-0.5 ${
-                            isWin ? 'text-crypto-success' : 'text-crypto-danger'
-                        }`}>
-                            ≈ {isWin ? '+' : '-'}₹{(Math.abs(estNetPnl) * 85).toFixed(2)}
-                        </div>
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -237,8 +249,8 @@ export default function BotActivePosition({
     const navigate = useNavigate();
 
     const activeTrades = (Array.isArray(trades) && trades.length > 0)
-        ? trades.filter(t => t && t.result === 'open')
-        : (trade && trade.result === 'open' ? [trade] : []);
+        ? trades.filter(t => t && (t.result === 'open' || t.result === 'pending_entry'))
+        : (trade && (trade.result === 'open' || trade.result === 'pending_entry') ? [trade] : []);
 
     if (activeTrades.length === 0) {
         // Standby / Scanning State

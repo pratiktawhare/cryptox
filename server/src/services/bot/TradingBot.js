@@ -318,7 +318,7 @@ class TradingBot {
             const unverifiedTrades = await BotTrade.find({
                 userId,
                 mode: 'paper',
-                result: { $in: ['open', 'pending_entry'] },
+                result: 'open',
             });
             for (const t of unverifiedTrades) {
                 const openPos = await PaperPosition.findOne({ userId, symbol: t.symbol, status: 'open' });
@@ -347,10 +347,12 @@ class TradingBot {
                 if (client) {
                     const posResp = await client.getPositions();
                     const livePositions = posResp?.result || [];
+                    // Only reconcile filled 'open' trades against positions.
+                    // 'pending_entry' are limit orders waiting for fill, handled by EntryOrderWatcher.
                     const unverifiedLiveTrades = await BotTrade.find({
                         userId,
                         mode: 'live',
-                        result: { $in: ['open', 'pending_entry'] },
+                        result: 'open',
                     });
                     for (const t of unverifiedLiveTrades) {
                         const hasPos = livePositions.some(p => p.product_symbol === t.symbol && Math.abs(parseFloat(p.size || 0)) > 0);
@@ -381,7 +383,10 @@ class TradingBot {
             mode: this.mode,
             result: { $in: ['open', 'pending_entry'] },
         });
-        const maxAllowed = config.maxOpenPositions || 5;
+        const maxAllowed = Math.min(
+            config.maxOpenPositions > 0 ? config.maxOpenPositions : 5,
+            config.walletParts > 0 ? config.walletParts : 5
+        );
         if (openTrades.length >= maxAllowed) {
             console.log(`[TradingBot] User has reached max open positions limit (${openTrades.length}/${maxAllowed}). Skipping entry.`);
             this.lastScanResult = {

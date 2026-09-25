@@ -33,13 +33,29 @@
  * }}
  */
 function filterAffordable(symbols, config, actualAvailableBalance, wsManager, productCatalog) {
-    // ── Step 1: Effective budget — user's configured budget, capped at real balance ──
+    // ── Step 1: Wallet Part Sizing ────────────────────────────────────────────
     const budgetUSDT = config.budgetUSDT > 0 ? config.budgetUSDT : 10;
-    const effectiveBudget = Math.min(budgetUSDT, actualAvailableBalance);
+    const walletParts = Math.max(1, config.walletParts || 1);
+    const targetPartMargin = budgetUSDT / walletParts;
 
-    // ── Step 2: Risk amount for this cycle ────────────────────────────────────
-    const riskPct    = config.riskPerTradePct > 0 ? config.riskPerTradePct : 5;
-    const riskAmount = effectiveBudget * (riskPct / 100);
+    // Minimum balance required to open any new position for a wallet part
+    // Must have at least 60% of target part margin available
+    if (actualAvailableBalance < targetPartMargin * 0.60) {
+        return {
+            affordable: [],
+            skipped: symbols.map(symbol => ({
+                symbol,
+                reason: 'insufficient_part_balance',
+                minCost: 0,
+                budget: parseFloat(targetPartMargin.toFixed(4)),
+            })),
+            effectiveBudget: parseFloat(actualAvailableBalance.toFixed(4)),
+            riskAmount: parseFloat(targetPartMargin.toFixed(6)),
+        };
+    }
+
+    // Maximum margin allowed for 1 coin's minimum order (wallet part + 25% rounding buffer)
+    const maxAllowedMargin = targetPartMargin * 1.25;
 
     const affordable = [];
     const skipped    = [];
@@ -48,24 +64,21 @@ function filterAffordable(symbols, config, actualAvailableBalance, wsManager, pr
         // ── Current price from live ticker ────────────────────────────────────
         const price = wsManager?.getPrice(symbol);
         if (!price || price <= 0) {
-            skipped.push({ symbol, reason: 'no_price', minCost: 0, budget: riskAmount });
+            skipped.push({ symbol, reason: 'no_price', minCost: 0, budget: maxAllowedMargin });
             continue;
         }
 
         // ── Product spec: min order quantity and contract value ──────────────
         const spec = getProductSpec(symbol, productCatalog);
         if (!spec || spec.minQty <= 0) {
-            skipped.push({ symbol, reason: 'no_product_spec', minCost: 0, budget: riskAmount });
+            skipped.push({ symbol, reason: 'no_product_spec', minCost: 0, budget: maxAllowedMargin });
             continue;
         }
 
         // ── Minimum margin required to open the smallest possible position ────
         // margin = notional / leverage = (qty × contractValue × price) / leverage
-        const leverage   = config.maxLeverage > 0 ? config.maxLeverage : 20;
-        const minCost    = (spec.minQty * spec.contractValue * price) / leverage;
-        const walletParts = config.walletParts > 0 ? config.walletParts : 2;
-        const targetMargin = effectiveBudget / walletParts;
-        const maxAllowedMargin = Math.max(targetMargin, riskAmount, effectiveBudget * 0.5);
+        const leverage = config.maxLeverage > 0 ? config.maxLeverage : 20;
+        const minCost  = (spec.minQty * spec.contractValue * price) / leverage;
 
         if (minCost <= maxAllowedMargin && minCost <= actualAvailableBalance) {
             affordable.push(symbol);
@@ -82,8 +95,8 @@ function filterAffordable(symbols, config, actualAvailableBalance, wsManager, pr
     return {
         affordable,
         skipped,
-        effectiveBudget: parseFloat(effectiveBudget.toFixed(4)),
-        riskAmount:      parseFloat(riskAmount.toFixed(6)),
+        effectiveBudget: parseFloat(actualAvailableBalance.toFixed(4)),
+        riskAmount:      parseFloat(targetPartMargin.toFixed(6)),
     };
 }
 
