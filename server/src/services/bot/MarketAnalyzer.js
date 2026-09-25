@@ -55,6 +55,15 @@ function analyzeSymbol(symbol, wsManager) {
     const atrPct_5m     = calcATRPercent(highs5m, lows5m, closes5m, 14);
     const volumeRatio   = calcVolumeRatio(volumes5m, 20);
 
+    // RSI slope: current RSI minus RSI computed without the last candle → detects momentum deceleration
+    const rsiPrev_5m   = candles5m.length > 16 ? calcRSI(closes5m.slice(0, -1), 14) : null;
+    const rsiSlope_5m  = (rsi_5m !== null && rsiPrev_5m !== null) ? (rsi_5m - rsiPrev_5m) : null;
+
+    // Stretch ratio: how many ATRs the close is from EMA21 → measures overextension
+    const stretchRatio_5m = (atr_5m !== null && atr_5m > 0 && ema21_5m !== null)
+        ? Math.abs(currentClose - ema21_5m) / atr_5m
+        : null;
+
     // ── 1m Indicators ───────────────────────────────────────────────────────
     const closes1mFull  = candles1m.map(c => c.close);
     const ema9_1m       = calcEMA(closes1mFull, 9);
@@ -96,14 +105,16 @@ function analyzeSymbol(symbol, wsManager) {
 
         // 5m timeframe
         '5m': {
-            ema9:       ema9_5m,
-            ema21:      ema21_5m,
-            ema21Slope: ema21Slope_5m,
-            rsi:        rsi_5m,
-            atr:        atr_5m,
-            atrPct:     atrPct_5m,     // ATR as % of price — for regime detection
+            ema9:        ema9_5m,
+            ema21:       ema21_5m,
+            ema21Slope:  ema21Slope_5m,
+            rsi:         rsi_5m,
+            rsiSlope:    rsiSlope_5m,    // RSI this bar minus RSI previous bar (deceleration)
+            atr:         atr_5m,
+            atrPct:      atrPct_5m,      // ATR as % of price — for regime detection
+            stretchRatio: stretchRatio_5m, // |close - EMA21| / ATR — overextension gauge
             volumeRatio: volumeRatio,
-            close:      currentClose,
+            close:       currentClose,
         },
 
         // 1m timeframe

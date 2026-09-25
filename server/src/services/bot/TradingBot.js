@@ -649,12 +649,49 @@ class TradingBot {
             console.log(`[TradingBot] 🔄 REVERSE MODE ACTIVE: Inverting signal ${best.scoreResult.direction?.toUpperCase()} → ${tradeDirection.toUpperCase()} on ${best.symbol} (fading rally/dump)`);
         }
 
+        // ── Layer 3: Smart pullback entry pricing ─────────────────────────────
+        // Instead of always entering at the close (rally top), graduate the entry
+        // price toward EMA9 based on how overextended price is from EMA21.
+        //
+        //  stretchRatio ≤ 0.6 → price is near EMA21, enter at close (normal)
+        //  stretchRatio 0.6–1.5 → slide entry toward EMA9 proportionally
+        //  stretchRatio > 1.5  → already hard-rejected by Layer 1 (OVEREXTENDED)
+        //
+        // If the pullback to entryPrice doesn't happen within 15 min,
+        // EntryOrderWatcher.js cancels the order automatically.
+        const close5m      = best.snapshot.close;
+        const ema9_5m      = best.snapshot['5m'].ema9;
+        const ema21_5m     = best.snapshot['5m'].ema21;
+        const atr5m        = best.snapshot['5m'].atr;
+        const stretch5m    = best.snapshot['5m'].stretchRatio;
+
+        let smartEntryPrice = close5m;
+
+        if (ema9_5m !== null && atr5m !== null && atr5m > 0 && stretch5m != null && stretch5m > 0.6) {
+            const pullbackRatio = Math.min((stretch5m - 0.6) / 0.9, 1.0); // 0.0 → 1.0
+
+            if (tradeDirection === 'long' && close5m > ema9_5m) {
+                // For long: slide entry price down toward EMA9
+                const gap = close5m - ema9_5m;
+                smartEntryPrice = close5m - (pullbackRatio * gap);
+            } else if (tradeDirection === 'short' && close5m < ema9_5m) {
+                // For short: slide entry price up toward EMA9
+                const gap = ema9_5m - close5m;
+                smartEntryPrice = close5m + (pullbackRatio * gap);
+            }
+
+            if (smartEntryPrice !== close5m) {
+                const adjPct = (Math.abs(close5m - smartEntryPrice) / close5m * 100).toFixed(3);
+                console.log(`[TradingBot] 📐 Pullback entry on ${best.symbol}: close=${close5m.toFixed(4)} → entry=${smartEntryPrice.toFixed(4)} (${adjPct}% toward EMA9, stretch=${stretch5m.toFixed(2)}x ATR)`);
+            }
+        }
+
         const riskResult = calcRisk({
             config,
             actualAvailableBalance: availableBalance,
             symbol: best.symbol,
             direction: tradeDirection,
-            entryPrice: best.snapshot.close,
+            entryPrice: smartEntryPrice,
             atr: best.snapshot['5m'].atr,
             spread: best.snapshot.spread,
             fundingRate: best.snapshot.fundingRate,

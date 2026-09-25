@@ -30,8 +30,16 @@ const SCORE_CONFIG = {
     // RSI boundaries
     RSI_BULL_MIN:        50,    // RSI must be > this for long
     RSI_BEAR_MAX:        50,    // RSI must be < this for short
-    RSI_OVERBOUGHT:      75,    // long rejected if RSI > this (not overbought)
-    RSI_OVERSOLD:        25,    // short rejected if RSI < this (not oversold)
+    RSI_OVERBOUGHT:      67,    // long rejected if RSI >= this (tightened from 75 — sweet spot ends at 67)
+    RSI_OVERSOLD:        33,    // short rejected if RSI <= this (tightened from 25)
+
+    // RSI deceleration: if RSI exceeds this threshold AND slope is negative → Condition 5 fails.
+    // Catches setups where RSI is 63-66 but already rolling over — momentum peaked last bar.
+    RSI_SLOPE_HOT_THRESHOLD: 62,
+
+    // Overextension gate: if |close - EMA21| / ATR exceeds this, hard-reject before scoring.
+    // Prevents entries after the coin has already run 1.5+ ATRs from its baseline.
+    STRETCH_RATIO_MAX: 1.5,
 
     // Volume confirmation
     VOLUME_CONFIRM_MIN:  1.0,   // volume ratio must be > this
@@ -94,11 +102,23 @@ function scoreDirection(direction, snapshot, regimeResult) {
         conditions.rsiMidline = false;
     }
 
-    // ── Condition 5: RSI not over-extended ────────────────────────────────────
+    // ── Condition 5: RSI not over-extended (ceiling + deceleration guard) ────────
     if (tf5.rsi !== null) {
-        const pass = isLong
+        // Part A: RSI ceiling — must be below overbought / above oversold
+        const ceiling = isLong
             ? (tf5.rsi < SCORE_CONFIG.RSI_OVERBOUGHT)
             : (tf5.rsi > SCORE_CONFIG.RSI_OVERSOLD);
+
+        // Part B: RSI deceleration guard — if RSI is in the "warm zone" (>= HOT_THRESHOLD)
+        // it must still be rising. A falling RSI here means momentum peaked last bar.
+        // (Only activates when rsiSlope data is available from MarketAnalyzer)
+        const rsiHot = isLong
+            ? (tf5.rsi >= SCORE_CONFIG.RSI_SLOPE_HOT_THRESHOLD)
+            : (tf5.rsi <= (100 - SCORE_CONFIG.RSI_SLOPE_HOT_THRESHOLD));
+        const slopeOk = !rsiHot
+            || (tf5.rsiSlope !== null && (isLong ? tf5.rsiSlope >= 0 : tf5.rsiSlope <= 0));
+
+        const pass = ceiling && slopeOk;
         conditions.rsiNotExtended = pass;
         if (pass) score++;
     } else {
@@ -155,6 +175,29 @@ function scoreDirection(direction, snapshot, regimeResult) {
  */
 function scoreSignal(snapshot, regimeResult, minScore = 5, groqResult = null) {
     const regime = regimeResult?.regime || 'UNCERTAIN';
+
+    // ── Layer 1: Overextension hard gate ─────────────────────────────────────
+    // If price is more than STRETCH_RATIO_MAX ATRs from EMA21, the coin already ran.
+    // Hard-reject before any scoring — no score is calculated.
+    const stretchRatio = snapshot['5m']?.stretchRatio;
+    if (stretchRatio != null && stretchRatio > SCORE_CONFIG.STRETCH_RATIO_MAX) {
+        return {
+            direction:        null,
+            score:            0,
+            maxScore:         8,
+            conditions:       {},
+            longScore:        0,
+            shortScore:       0,
+            regime,
+            regimeConfidence: regimeResult?.confidence ?? 0,
+            regimeReason:     regimeResult?.reason ?? '',
+            groqRegime:       groqResult?.marketRegime ?? null,
+            groqConfidence:   groqResult?.confidence ?? null,
+            groqRiskAdj:      groqResult?.riskAdjustment ?? 1.0,
+            decision:         'OVEREXTENDED',
+            reason:           `Price is ${stretchRatio.toFixed(2)}x ATR from EMA21 (max ${SCORE_CONFIG.STRETCH_RATIO_MAX}x) — rally overextended, skipping entry`,
+        };
+    }
 
     // ── Score both directions ─────────────────────────────────────────────────
     const longResult  = scoreDirection('long',  snapshot, regimeResult);
