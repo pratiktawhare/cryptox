@@ -203,9 +203,10 @@ function calcRisk(params) {
         return fail('Calculated SL price is invalid (≤ 0)');
     }
 
-    // Early Stop Loss Trigger (triggers at 82% of stop loss distance to guarantee aggressive marketable exit)
-    // E.g. -1.50% stop loss limit triggers early at -1.23%
-    const slTriggerDist = slDistance * 0.82;
+    // Stop Loss Trigger: Keep trigger very close to the stop loss limit price (97% of SL distance)
+    // so the trade is given room to breathe until ~1%, while keeping a tight buffer so Delta executes reliably.
+    // E.g. -1.00% stop loss limit triggers at -0.97%, instead of triggering prematurely at -0.75% or -0.82%.
+    const slTriggerDist = slDistance * 0.97;
     const stopLossTrigger = isLong
         ? parseFloat((entryPrice - slTriggerDist).toFixed(8))
         : parseFloat((entryPrice + slTriggerDist).toFixed(8));
@@ -233,6 +234,19 @@ function calcRisk(params) {
         return parseFloat((Math.round(price / tick) * tick).toFixed(8));
     };
 
+    const finalStopLoss = roundToTick(stopLoss, tickSize);
+    let finalStopLossTrigger = roundToTick(stopLossTrigger, tickSize);
+
+    // Ensure stopLossTrigger is very close to stopLoss but strictly separated by at least 1 tick
+    // so Delta Exchange has a distinct trigger that activates right before the limit floor.
+    if (tickSize && tickSize > 0) {
+        if (isLong && finalStopLossTrigger <= finalStopLoss) {
+            finalStopLossTrigger = parseFloat((finalStopLoss + tickSize).toFixed(8));
+        } else if (!isLong && finalStopLossTrigger >= finalStopLoss) {
+            finalStopLossTrigger = parseFloat((finalStopLoss - tickSize).toFixed(8));
+        }
+    }
+
     return {
         valid:             true,
         reason:            null,
@@ -240,8 +254,8 @@ function calcRisk(params) {
         direction,
         qty,
         entryPrice:        roundToTick(entryPrice,        tickSize),
-        stopLoss:          roundToTick(stopLoss,          tickSize),
-        stopLossTrigger:   roundToTick(stopLossTrigger,   tickSize),
+        stopLoss:          finalStopLoss,
+        stopLossTrigger:   finalStopLossTrigger,
         takeProfit:        roundToTick(takeProfit,        tickSize),
         takeProfitTrigger: roundToTick(takeProfitTrigger, tickSize),
         leverage,
