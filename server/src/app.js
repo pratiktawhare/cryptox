@@ -134,6 +134,7 @@ async function start() {
 
     // 1. Boot ProductCatalog — fetch all perpetual futures
     await productCatalog.init();
+    app.set('productCatalog', productCatalog);
 
     // 2. Start WebSocket — subscribe to ALL coins
     wsManager = new DeltaWebSocketManager(io, productCatalog);

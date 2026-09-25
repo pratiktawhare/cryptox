@@ -46,8 +46,13 @@ class ProductCatalog {
     /** Look up a product by its numeric Delta product_id */
     getById(id) { return this.byId.get(id); }
 
-    /** Returns all symbols in the catalog */
-    getSymbols() { return Array.from(this.bySymbol.keys()); }
+    /** Returns all symbols in the catalog (sorted by crypto liquidity priority) */
+    getSymbols() {
+        if (this.list && this.list.length > 0) {
+            return this.list.map(p => p.symbol);
+        }
+        return Array.from(this.bySymbol.keys());
+    }
 
     // ─── Lifecycle ─────────────────────────────────────────────
 
@@ -136,14 +141,31 @@ class ProductCatalog {
                 byId.set(product.id, product);
             }
 
-            // Sort: BTC, ETH first, then alphabetically
-            const priority = ['BTCUSD', 'ETHUSD', 'SOLUSD', 'BNBUSD'];
+            // Sort: Major liquid 24/7 crypto perpetuals first, demote stock/equity perpetuals to the bottom
+            const priority = [
+                'BTCUSD', 'ETHUSD', 'SOLUSD', 'XRPUSD', 'DOGEUSD',
+                'SUIUSD', 'AVAXUSD', 'ADAUSD', 'NEARUSD', 'LINKUSD',
+                'BNBUSD', 'LTCUSD', 'PEPEUSD', '1000PEPEUSD', 'DOTUSD',
+                'APTUSD', 'INJUSD', 'TIAUSD', 'FETUSD', 'RENDERUSD',
+                'MATICUSD', 'POLUSD', 'SHIBUSD', '1000SHIBUSD', 'TRXUSD',
+                'BCHUSD', 'UNIUSD', 'AAVEUSD', 'FILUSD', 'ARBUSD', 'OPUSD'
+            ];
+
+            const isStockOrEquity = (sym) => sym.endsWith('BUSD') || sym.includes('XUSD');
+
             const sorted = [...bySymbol.values()].sort((a, b) => {
                 const ai = priority.indexOf(a.symbol);
                 const bi = priority.indexOf(b.symbol);
                 if (ai !== -1 && bi !== -1) return ai - bi;
                 if (ai !== -1) return -1;
                 if (bi !== -1) return 1;
+
+                // Pure crypto before stock/equity perpetuals
+                const aStock = isStockOrEquity(a.symbol);
+                const bStock = isStockOrEquity(b.symbol);
+                if (!aStock && bStock) return -1;
+                if (aStock && !bStock) return 1;
+
                 return a.symbol.localeCompare(b.symbol);
             });
 

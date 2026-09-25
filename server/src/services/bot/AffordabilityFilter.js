@@ -61,8 +61,26 @@ function filterAffordable(symbols, config, actualAvailableBalance, wsManager, pr
     const skipped    = [];
 
     for (const symbol of symbols) {
-        // ── Current price from live ticker ────────────────────────────────────
-        const price = wsManager?.getPrice(symbol);
+        // ── Current price from live ticker or candle store fallback ──────────
+        let price = null;
+        if (wsManager?.getPrice) {
+            const p = wsManager.getPrice(symbol);
+            if (p && p > 0) price = p;
+        }
+        if (!price && wsManager?.getTicker) {
+            const ticker = wsManager.getTicker(symbol);
+            if (ticker?.price) price = parseFloat(ticker.price);
+            else if (ticker?.close) price = parseFloat(ticker.close);
+            else if (ticker?.mark_price) price = parseFloat(ticker.mark_price);
+        }
+        if (!price) {
+            try {
+                const candleStore = require('./CandleStore');
+                const lastCandle = candleStore.getLastCandle(symbol, '1m') || candleStore.getLastCandle(symbol, '5m');
+                if (lastCandle?.close) price = lastCandle.close;
+            } catch (e) { /* ignore */ }
+        }
+
         if (!price || price <= 0) {
             skipped.push({ symbol, reason: 'no_price', minCost: 0, budget: maxAllowedMargin });
             continue;
