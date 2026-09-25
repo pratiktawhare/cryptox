@@ -957,6 +957,52 @@ class TradingBot {
                     const m5 = snapshot ? snapshot['5m'] : null;
                     const m1 = snapshot ? snapshot['1m'] : null;
 
+                    // ── BREAKEVEN SL MOVE CHECK (50% TP Target Reached) ──
+                    if (!trade.breakevenMoved && trade.takeProfit && trade.entryPrice) {
+                        const tpDistance = Math.abs(trade.takeProfit - trade.entryPrice);
+                        const beTriggerPrice = isLong
+                            ? trade.entryPrice + (tpDistance * 0.50)
+                            : trade.entryPrice - (tpDistance * 0.50);
+
+                        const pricePassedTrigger = isLong
+                            ? currentPrice >= beTriggerPrice
+                            : currentPrice <= beTriggerPrice;
+
+                        // 1m trend still aligned with position direction
+                        const trendAligned = isLong
+                            ? (m1?.ema9 && m1?.ema21 ? m1.ema9 > m1.ema21 : true)
+                            : (m1?.ema9 && m1?.ema21 ? m1.ema9 < m1.ema21 : true);
+
+                        if (pricePassedTrigger && trendAligned) {
+                            trade.breakevenTriggeredCount = (trade.breakevenTriggeredCount || 0) + 1;
+                            await trade.save();
+
+                            if (trade.breakevenTriggeredCount >= 2) {
+                                // Confirmed over 2 consecutive cycles — execute breakeven SL move
+                                console.log(`[TradingBot] 🔒 Breakeven confirmed (2/2) for ${trade.direction.toUpperCase()} ${symbol} (Current: $${currentPrice}, Trigger: $${beTriggerPrice.toFixed(4)}). Moving SL to Entry: $${trade.entryPrice}`);
+                                try {
+                                    await positionMonitor.modifyStopLoss(trade, trade.entryPrice);
+                                } catch (beErr) {
+                                    console.error(`[TradingBot] Failed to execute breakeven SL move for ${symbol}:`, beErr.message);
+                                }
+                            } else {
+                                // First confirmation cycle
+                                console.log(`[TradingBot] ⏳ Breakeven trigger pending (1/2 confirmations) for ${symbol} @ $${currentPrice} (Trigger: $${beTriggerPrice.toFixed(4)})`);
+                                await this._logEvent(
+                                    userId,
+                                    'POSITION_BREAKEVEN_PENDING',
+                                    'info',
+                                    `⏳ [BREAKEVEN PENDING] ${symbol} (${trade.direction.toUpperCase()}): Reached 50% TP target ($${currentPrice} ${isLong ? '>=' : '<='} $${beTriggerPrice.toFixed(4)}). Awaiting 2nd scan confirmation to move SL to Entry.`,
+                                    { tradeId: trade._id, symbol, currentPrice, beTriggerPrice, confirmations: 1 }
+                                );
+                            }
+                        } else if (trade.breakevenTriggeredCount > 0) {
+                            // Price pulled back below 50% TP before second confirmation — reset
+                            trade.breakevenTriggeredCount = 0;
+                            await trade.save();
+                        }
+                    }
+
                     // Condition 2: Trend has gone opposite
                     let trendReversed = false;
                     if (snapshot && m5) {
@@ -967,13 +1013,14 @@ class TradingBot {
                         }
                     }
 
-                    // Condition 3: Signalling big loss / opposite rally (1m momentum confirms opposite direction)
+                    // Condition 3: Signalling big loss / opposite rally (1m momentum actively confirms opposite direction)
+                    // Tightened: requires both meaningful momentum magnitude (< -0.05% for LONG, > +0.05% for SHORT) AND EMA confirmation
                     let momentumConfirms = false;
                     if (snapshot && m1) {
                         if (isLong) {
-                            momentumConfirms = (m1.momentum ?? 0) <= 0 || (m1.ema9 < m1.ema21);
+                            momentumConfirms = ((m1.momentum ?? 0) < -0.05) && (m1.ema9 < m1.ema21);
                         } else {
-                            momentumConfirms = (m1.momentum ?? 0) >= 0 || (m1.ema9 > m1.ema21);
+                            momentumConfirms = ((m1.momentum ?? 0) > 0.05) && (m1.ema9 > m1.ema21);
                         }
                     }
 
@@ -1001,7 +1048,7 @@ class TradingBot {
                                 userId,
                                 'SMART_LOSS_GUARD',
                                 'critical',
-                                `🚨 [DROP OFF] ${symbol} (${trade.direction.toUpperCase()}): Dropped off! ROI ${roi.toFixed(2)}% <= -20% with opposite ${currentRegime} rally. Limit close placed @ $${currentPrice}`,
+                                `🚨 [DROP OFF] ${symbol} (${trade.direction.toUpperCase()}): Dropped off! ROI ${roi.toFixed(2)}% <= -20% with opposite ${currentRegime} rally. Market close placed @ $${currentPrice}`,
                                 { tradeId: trade._id, symbol, direction: trade.direction, currentPrice, roi, regime: currentRegime, momentum: m1?.momentum, status: 'DROP_OFF' }
                             );
 
@@ -1019,7 +1066,9 @@ class TradingBot {
                     } else {
                         // ── SAFE TO HOLD ──
                         let safeReason = '';
-                        if (roi >= 0) {
+                        if (trade.breakevenMoved) {
+                            safeReason = `Breakeven SL locked @ $${trade.entryPrice} (Zero risk secured)`;
+                        } else if (roi >= 0) {
                             safeReason = `In profit (+${roi.toFixed(1)}%), trend aligned`;
                         } else if (roi > -20) {
                             safeReason = `Normal pullback (${roi.toFixed(1)}%), within risk limits`;

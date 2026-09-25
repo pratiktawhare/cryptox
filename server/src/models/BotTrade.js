@@ -72,7 +72,7 @@ const botTradeSchema = new mongoose.Schema(
 
         exitReason: {
             type: String,
-            enum: ['take_profit', 'stop_loss', 'manual', 'manual_close', 'emergency', 'user_emergency_stop', 'timeout', 'entry_timeout', 'smart_loss_guard', 'cancelled', null],
+            enum: ['take_profit', 'stop_loss', 'breakeven', 'manual', 'manual_close', 'emergency', 'user_emergency_stop', 'timeout', 'entry_timeout', 'smart_loss_guard', 'cancelled', null],
             default: null,
         },
 
@@ -81,6 +81,11 @@ const botTradeSchema = new mongoose.Schema(
         entryOrderId: { type: String, default: null },
         tpOrderId:    { type: String, default: null },
         slOrderId:    { type: String, default: null },
+
+        // ── Breakeven Stop Loss Tracking ────────────────────────────────────
+        breakevenMoved:          { type: Boolean, default: false },
+        breakevenMovedAt:        { type: Date, default: null },
+        breakevenTriggeredCount: { type: Number, default: 0 },
 
         // ── Pending Limit Entry Tracking ────────────────────────────────────
         // Used when the bot places a limit order and waits for fill

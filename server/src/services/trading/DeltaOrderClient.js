@@ -222,6 +222,38 @@ class DeltaOrderClient {
         if (symbol) params.product_symbol = symbol;
         return this._request('GET', '/v2/fills', null, params);
     }
+
+    /**
+     * Set or update bracket stop-loss and/or take-profit for a position.
+     * Uses Delta's POST /v2/orders/bracket endpoint.
+     */
+    async setBracketOrder({ symbol, stopLoss = null, takeProfit = null }) {
+        const productCatalog = require('../ProductCatalog');
+        const prod = productCatalog.getBySymbol(symbol);
+        if (!prod) {
+            throw new Error(`Product metadata not found for symbol: ${symbol}`);
+        }
+
+        const body = {
+            product_id: Number(prod.id),
+        };
+
+        if (stopLoss !== null && stopLoss !== undefined) {
+            body.stop_loss_order = {
+                order_type: 'market_order',
+                stop_price: stopLoss.toString(),
+            };
+        }
+
+        if (takeProfit !== null && takeProfit !== undefined) {
+            body.take_profit_order = {
+                order_type: 'market_order',
+                stop_price: takeProfit.toString(),
+            };
+        }
+
+        return this._request('POST', '/v2/orders/bracket', body);
+    }
 }
 
 module.exports = DeltaOrderClient;

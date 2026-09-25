@@ -96,6 +96,11 @@ function SinglePositionCard({ trade, currentPrice, onCloseTrade, navigate }) {
                                         ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%)
                                     </span>
                                 </div>
+                                {trade.breakevenMoved && (
+                                    <div className="text-[10px] font-bold text-sky-400 mt-0.5 flex items-center justify-end gap-1">
+                                        <span>🛡️ Breakeven Locked (Zero Risk)</span>
+                                    </div>
+                                )}
                                 {pnlPct <= -20 && (
                                     <div className="text-[10px] font-bold text-rose-400 mt-0.5 flex items-center justify-end gap-1">
                                         <span>🛡️ Drawdown &gt; 20%</span>
@@ -127,6 +132,7 @@ function SinglePositionCard({ trade, currentPrice, onCloseTrade, navigate }) {
                             type="button"
                             disabled={closing}
                             onClick={handleClose}
+                            title="Close Trade at Market Price"
                             className="px-4 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-bold transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50"
                         >
                             {closing ? (
@@ -166,16 +172,20 @@ function SinglePositionCard({ trade, currentPrice, onCloseTrade, navigate }) {
                             ${Number(markPrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 5 })}
                         </div>
                     </div>
-                    <div className="p-3 bg-red-500/5 rounded-xl border border-red-500/20">
+                    <div className={`p-3 rounded-xl border transition-all ${trade.breakevenMoved ? 'bg-sky-500/10 border-sky-500/30' : 'bg-red-500/5 border-red-500/20'}`}>
                         <div className="flex items-center justify-between">
-                            <span className="text-[10px] uppercase font-bold text-red-400">Stop Loss (SL)</span>
-                            {trade.stopLossTrigger && (
+                            <span className={`text-[10px] uppercase font-bold ${trade.breakevenMoved ? 'text-sky-400' : 'text-red-400'}`}>Stop Loss (SL)</span>
+                            {trade.breakevenMoved ? (
+                                <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40">
+                                    BREAKEVEN
+                                </span>
+                            ) : trade.stopLossTrigger ? (
                                 <span className="text-[9px] font-bold text-red-400/80 font-mono">
                                     Trig: ${Number(trade.stopLossTrigger).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 5 })}
                                 </span>
-                            )}
+                            ) : null}
                         </div>
-                        <div className="text-sm font-black text-red-400 tabular-nums mt-0.5">
+                        <div className={`text-sm font-black tabular-nums mt-0.5 ${trade.breakevenMoved ? 'text-sky-400' : 'text-red-400'}`}>
                             ${Number(sl).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 5 })}
                         </div>
                     </div>

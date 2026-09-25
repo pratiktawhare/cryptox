@@ -282,7 +282,7 @@ class PositionMonitor {
         trade.grossPnl = grossPnl;
         trade.fees = totalFees;
         trade.netPnl = netPnl;
-        trade.result = isWin ? 'win' : 'loss';
+        trade.result = isWin ? 'win' : (trade.breakevenMoved ? 'breakeven' : 'loss');
         trade.exitReason = exitReason;
         await trade.save();
 
@@ -327,7 +327,7 @@ class PositionMonitor {
         );
 
         // 6. Notify user
-        this._notifyOutcome(trade.userId, trade.symbol, trade.direction, isWin, exitPrice, netPnl, exitReason);
+        this._notifyOutcome(trade.userId, trade.symbol, trade.direction, isWin, exitPrice, netPnl, exitReason, trade.breakevenMoved);
 
         // 7. Emit Socket.IO events
         this._emit(trade.userId, 'bot_trade_closed', {
@@ -373,13 +373,13 @@ class PositionMonitor {
                 console.warn(`[PositionMonitor] Cancel orders warning for ${trade.symbol}:`, cancelErr.message);
             }
 
-            // 2. Place limit close order at exitPrice, falling back to market order if needed
+            // 2. Place market close order first (guaranteed fill during volatile rescue), falling back to limit at exitPrice
             const side = isLong ? 'buy' : 'sell'; // opposite of position side
             try {
-                await client.closePosition(trade.symbol, trade.quantity, side, exitPrice);
-            } catch (ordErr) {
-                console.warn(`[PositionMonitor] Limit close failed (${ordErr.message}), falling back to market close:`, ordErr.message);
                 await client.closePosition(trade.symbol, trade.quantity, side);
+            } catch (ordErr) {
+                console.warn(`[PositionMonitor] Market close failed (${ordErr.message}), falling back to limit close:`, ordErr.message);
+                await client.closePosition(trade.symbol, trade.quantity, side, exitPrice);
             }
 
             // 3. Calculate PnL
@@ -397,7 +397,7 @@ class PositionMonitor {
             trade.grossPnl = grossPnl;
             trade.fees = totalFees;
             trade.netPnl = netPnl;
-            trade.result = isWin ? 'win' : 'loss';
+            trade.result = isWin ? 'win' : (trade.breakevenMoved ? 'breakeven' : 'loss');
             trade.exitReason = exitReason;
             await trade.save();
 
@@ -417,7 +417,7 @@ class PositionMonitor {
             );
 
             // 7. Notify user
-            this._notifyOutcome(trade.userId, trade.symbol, trade.direction, isWin, exitPrice, netPnl, exitReason);
+            this._notifyOutcome(trade.userId, trade.symbol, trade.direction, isWin, exitPrice, netPnl, exitReason, trade.breakevenMoved);
 
             // 8. Emit Socket.IO events
             this._emit(trade.userId, 'bot_trade_closed', {
@@ -432,6 +432,91 @@ class PositionMonitor {
 
             console.log(`[PositionMonitor] 💰 [Live] Trade ${trade.symbol} closed via ${exitReason} @ $${exitPrice} | Net PnL: $${netPnl.toFixed(4)}`);
         }
+    }
+
+    /**
+     * Move or modify the stop loss for an open trade (e.g. Breakeven SL Move).
+     * Supports both Paper and Live modes.
+     *
+     * @param {object} trade      - BotTrade document
+     * @param {number} newSlPrice - New Stop Loss price (e.g. entryPrice for breakeven)
+     * @returns {Promise<boolean>}
+     */
+    async modifyStopLoss(trade, newSlPrice) {
+        if (!trade || !newSlPrice) return false;
+
+        const symbol = trade.symbol;
+
+        if (trade.mode === 'live') {
+            const client = await this._buildDeltaClient(trade.userId);
+            if (!client) {
+                throw new Error(`No Delta client available to modify SL for live trade ${symbol}`);
+            }
+
+            // 1. Fetch open orders to find and cancel existing stop loss leg
+            try {
+                const openOrdersRes = await client.getOpenOrders(symbol);
+                const openOrders = openOrdersRes?.result || [];
+                const symbolOrders = openOrders.filter(o => o.product_symbol === symbol);
+                const slOrder = symbolOrders.find(o => o.stop_order_type === 'stop_loss_order' || o.bracket_stop_loss_price || o.stop_price);
+
+                if (slOrder) {
+                    await client.cancelOrder(slOrder.id, symbol);
+                    // Wait 500ms to ensure exchange processes order cancellation
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+            } catch (cancelErr) {
+                console.warn(`[PositionMonitor] Warning cancelling old SL order for ${symbol}:`, cancelErr.message);
+            }
+
+            // 2. Place updated bracket stop-loss order on Delta
+            try {
+                await client.setBracketOrder({
+                    symbol,
+                    stopLoss: newSlPrice,
+                    takeProfit: trade.takeProfit || null,
+                });
+            } catch (bracketErr) {
+                console.error(`[PositionMonitor] Failed to place updated bracket SL on Delta for ${symbol}:`, bracketErr.message);
+                throw bracketErr;
+            }
+        } else if (trade.mode === 'paper') {
+            // Paper mode: update PaperPosition in DB
+            await PaperPosition.updateMany(
+                { userId: trade.userId, symbol, status: 'open' },
+                { stopLoss: newSlPrice }
+            );
+        }
+
+        // Update trade document
+        trade.stopLoss = newSlPrice;
+        trade.stopLossTrigger = newSlPrice;
+        trade.breakevenMoved = true;
+        trade.breakevenMovedAt = new Date();
+        await trade.save();
+
+        // Log BotEvent
+        await this._logEvent(
+            trade.userId,
+            trade.mode,
+            'BREAKEVEN_SL_MOVED',
+            'info',
+            `🛡️ [BREAKEVEN LOCKED] ${symbol} (${trade.direction.toUpperCase()}): Reached 50% TP target. Stop Loss moved to Entry Price ($${Number(newSlPrice).toFixed(4)}) · Zero risk secured!`,
+            { tradeId: trade._id, symbol, direction: trade.direction, entryPrice: trade.entryPrice, newStopLoss: newSlPrice, takeProfit: trade.takeProfit }
+        );
+
+        // Push real-time event to UI
+        this._emit(trade.userId, 'bot_position_updated', {
+            tradeId: trade._id,
+            symbol,
+            stopLoss: newSlPrice,
+            stopLossTrigger: newSlPrice,
+            breakevenMoved: true,
+            mode: trade.mode,
+        });
+
+        console.log(`[PositionMonitor] 🛡️ [${trade.mode.toUpperCase()}] ${symbol} SL moved to breakeven @ $${newSlPrice}`);
+        return true;
     }
 
     // ─── Live Trade Monitoring ─────────────────────────────────────────────────
@@ -513,7 +598,7 @@ class PositionMonitor {
         trade.grossPnl = grossPnl;
         trade.fees = totalFees;
         trade.netPnl = netPnl;
-        trade.result = isWin ? 'win' : 'loss';
+        trade.result = isWin ? 'win' : (trade.breakevenMoved ? 'breakeven' : 'loss');
         trade.exitReason = exitReason;
         await trade.save();
 
@@ -540,7 +625,7 @@ class PositionMonitor {
         );
 
         // Notify user
-        this._notifyOutcome(trade.userId, trade.symbol, trade.direction, isWin, exitPrice, netPnl);
+        this._notifyOutcome(trade.userId, trade.symbol, trade.direction, isWin, exitPrice, netPnl, exitReason, trade.breakevenMoved);
 
         // Emit Socket.IO events
         this._emit(trade.userId, 'bot_trade_closed', {
@@ -609,7 +694,7 @@ class PositionMonitor {
         }
     }
 
-    _notifyOutcome(userId, symbol, direction, isWin, exitPrice, netPnl, exitReason = null) {
+    _notifyOutcome(userId, symbol, direction, isWin, exitPrice, netPnl, exitReason = null, isBreakeven = false) {
         try {
             const sym = (symbol || '').replace('USD', '/USD');
             const pnlStr = `${netPnl >= 0 ? '+' : ''}$${Number(netPnl).toFixed(2)}`;
@@ -619,6 +704,9 @@ class PositionMonitor {
             if (exitReason === 'smart_loss_guard') {
                 title = `🛡️ Smart Loss Guard: ${sym}`;
                 message = `Auto-exited early on trend reversal: ${pnlStr} on ${direction.toUpperCase()} @ $${Number(exitPrice).toFixed(4)}`;
+            } else if (exitReason === 'breakeven' || isBreakeven) {
+                title = `🛡️ Breakeven Exit: ${sym}`;
+                message = `Exited at Breakeven Stop Loss: ${pnlStr} on ${direction.toUpperCase()} @ $${Number(exitPrice).toFixed(4)}`;
             }
 
             if (notificationService?._createAndEmit) {
@@ -627,7 +715,7 @@ class PositionMonitor {
                     title,
                     message,
                     priority: 'high',
-                    sound: exitReason === 'smart_loss_guard' ? 'stoploss_hit' : (isWin ? 'target_hit' : 'stoploss_hit'),
+                    sound: exitReason === 'smart_loss_guard' || exitReason === 'breakeven' || isBreakeven ? 'stoploss_hit' : (isWin ? 'target_hit' : 'stoploss_hit'),
                 }).catch(() => {});
             }
         } catch (e) {

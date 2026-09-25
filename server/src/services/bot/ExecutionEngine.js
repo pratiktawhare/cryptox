@@ -606,7 +606,7 @@ class ExecutionEngine {
             reason = arguments[3] || 'emergency';
         }
 
-        const validExitReasons = ['take_profit', 'stop_loss', 'manual', 'manual_close', 'emergency', 'user_emergency_stop', 'timeout', 'entry_timeout', 'smart_loss_guard'];
+        const validExitReasons = ['take_profit', 'stop_loss', 'breakeven', 'manual', 'manual_close', 'emergency', 'user_emergency_stop', 'timeout', 'entry_timeout', 'smart_loss_guard'];
         const safeReason = validExitReasons.includes(reason) ? reason : 'emergency';
 
         let trade = null;
