@@ -131,17 +131,24 @@ class BreakoutScanner {
         const lowerTripwire = rangeLow - atrBuffer;
 
         // 4. Target Take Profit and Stop Loss geometry (strictly follows bot setting config.slAtrMultiplier)
-        const targetRoiPct = config.breakoutTargetRoiPct || 10; // e.g. 10% ROI
+        // Multiplies target distance by configured multiplier (e.g. 0.33% target × 5x = ~1.65% stop loss), matching RiskEngine.js
+        const targetRoiPct = config.breakoutTargetRoiPct || config.targetRoiPct || 6; // e.g. 6% ROI
         const leverage = config.maxLeverage || 20;
-        const targetPriceMovePct = targetRoiPct / leverage / 100; // e.g. 10 / 20 / 100 = 0.005 (0.50%)
+        const baseTargetPriceMovePct = targetRoiPct / leverage / 100;
+        // Include round-trip fee buffer (0.0826%) so net target ROI is fully preserved
+        const targetPriceMovePct = Math.max(baseTargetPriceMovePct + 0.000826, 0.003);
 
-        const takeProfitLong = upperTripwire * (1 + targetPriceMovePct);
-        const takeProfitShort = lowerTripwire * (1 - targetPriceMovePct);
+        const tpDistanceLong  = upperTripwire * targetPriceMovePct;
+        const tpDistanceShort = lowerTripwire * targetPriceMovePct;
 
-        // Stop Loss distance: Follow configured bot setting (config.slAtrMultiplier, default 5.0x ATR)
+        const takeProfitLong  = upperTripwire + tpDistanceLong;
+        const takeProfitShort = lowerTripwire - tpDistanceShort;
+
+        // Stop Loss distance: Follow configured bot setting (config.slAtrMultiplier, default 5.0x Target Distance)
+        // Matches RiskEngine.js: slDistance = requiredTpDist * slMultiplier
         const slMultiplier = (config.slAtrMultiplier && config.slAtrMultiplier > 0) ? config.slAtrMultiplier : 5.0;
-        let slDistanceLong = atr * slMultiplier;
-        let slDistanceShort = atr * slMultiplier;
+        let slDistanceLong  = Math.max(tpDistanceLong * slMultiplier, atr * slMultiplier);
+        let slDistanceShort = Math.max(tpDistanceShort * slMultiplier, atr * slMultiplier);
 
         // Safeguard 1: Ensure SL does NOT exceed 85% of liquidation distance (e.g. max ~4.25% at 20x)
         const maxSafeSlLong = upperTripwire * ((1 / leverage) * 0.85);
@@ -153,12 +160,12 @@ class BreakoutScanner {
             slDistanceShort = maxSafeSlShort;
         }
 
-        // Safeguard 2: Minimum safe distance to prevent instant noise stops (at least 0.25% of price or 1.5x atrBuffer)
-        const minSafeSlLong = Math.max(upperTripwire * 0.0025, atrBuffer * 1.5);
+        // Safeguard 2: Minimum safe distance to prevent instant noise stops (at least 0.8% of price or 1x TP distance)
+        const minSafeSlLong = Math.max(upperTripwire * 0.008, tpDistanceLong);
         if (slDistanceLong < minSafeSlLong) {
             slDistanceLong = minSafeSlLong;
         }
-        const minSafeSlShort = Math.max(lowerTripwire * 0.0025, atrBuffer * 1.5);
+        const minSafeSlShort = Math.max(lowerTripwire * 0.008, tpDistanceShort);
         if (slDistanceShort < minSafeSlShort) {
             slDistanceShort = minSafeSlShort;
         }
