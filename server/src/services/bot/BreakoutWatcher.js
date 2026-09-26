@@ -286,23 +286,33 @@ class BreakoutWatcher {
             this.armedTripwires.delete(sym);
             this.lastTradeExecutionTime = Date.now();
 
-            // 3. Select SL / TP based on direction (follows configured slAtrMultiplier)
+            // 3. Anchor SL / TP dynamically to entry price (guarantees positive directional geometry)
             const isLong = direction === 'long';
-            const takeProfit = isLong ? tripwire.takeProfitLong : tripwire.takeProfitShort;
-            const stopLoss   = isLong ? tripwire.stopLossLong : tripwire.stopLossShort;
+            const breakoutLevel = isLong ? tripwire.upperTripwire : tripwire.lowerTripwire;
+
+            // Target TP distance and SL distance (relative to entryPrice)
+            const targetMove = tripwire.targetPriceMovePct || 0.0038;
             const slMultiplier = tripwire.config?.slAtrMultiplier || 5.0;
-            const slDistPct = triggerPrice > 0 ? (Math.abs(triggerPrice - stopLoss) / triggerPrice * 100).toFixed(2) : '0';
-            const tpDistPct = triggerPrice > 0 ? (Math.abs(takeProfit - triggerPrice) / triggerPrice * 100).toFixed(2) : '0';
 
-            console.log(`[BreakoutWatcher] 🚀 FIRING ${direction.toUpperCase()} BREAKOUT on ${sym}! Price: $${triggerPrice}, TP: $${takeProfit.toFixed(4)} (+${tpDistPct}%), SL: $${stopLoss.toFixed(4)} (-${slDistPct}%, ${slMultiplier}x ATR) (RVOL: ${rvol.toFixed(2)}x)`);
+            const entryPrice = triggerPrice;
+            const tpDistance = entryPrice * targetMove;
+            const slDistance = Math.max(tpDistance * slMultiplier, (tripwire.atr || 0) * slMultiplier);
 
-            // 4. Execute Trade via ExecutionEngine
+            const takeProfit = isLong ? (entryPrice + tpDistance) : (entryPrice - tpDistance);
+            const stopLoss   = isLong ? (entryPrice - slDistance) : (entryPrice + slDistance);
+
+            const slDistPct = entryPrice > 0 ? (slDistance / entryPrice * 100).toFixed(2) : '0';
+            const tpDistPct = entryPrice > 0 ? (tpDistance / entryPrice * 100).toFixed(2) : '0';
+
+            console.log(`[BreakoutWatcher] 🚀 FIRING ${direction.toUpperCase()} BREAKOUT on ${sym}! Limit Entry: $${entryPrice}, TP: $${takeProfit.toFixed(4)} (+${tpDistPct}%), SL: $${stopLoss.toFixed(4)} (-${slDistPct}%, ${slMultiplier}x Target) (RVOL: ${rvol.toFixed(2)}x)`);
+
+            // 4. Execute Trade via ExecutionEngine as limit_order
             const execResult = await executionEngine.executeTrade({
                 userId:                 tripwire.userId,
                 mode:                   tripwire.mode,
                 symbol:                 sym,
                 direction,
-                entryPrice:             triggerPrice,
+                entryPrice,
                 stopLoss,
                 takeProfit,
                 quantity:               tripwire.quantity || 1,
@@ -315,9 +325,9 @@ class BreakoutWatcher {
                 productSpec:            productCatalog.getBySymbol(sym),
                 io:                     this.io,
                 wsManager:              this.wsManager,
-                orderType:              'market_order', // immediate entry on breakout breach
+                orderType:              'limit_order', // limit order entry at breakout level, no market chasing
                 strategyType:           tripwire.config?.strategyType || 'breakout_straddle',
-                breakoutLevel:          isLong ? tripwire.upperTripwire : tripwire.lowerTripwire,
+                breakoutLevel,
             });
 
             // 5. Audit Log Event

@@ -332,17 +332,46 @@ class ExecutionEngine {
             return parseFloat((Math.round(price / tick) * tick).toFixed(8));
         };
 
-        let adjStopLoss          = stopLoss;
-        let adjStopLossTrigger   = stopLossTrigger;
-        let adjTakeProfit        = takeProfit;
+        const isLong = direction === 'long';
+        // Compute intended distance from planned entryPrice
+        let intendedTpDist = Math.abs(takeProfit - entryPrice);
+        let intendedSlDist = Math.abs(stopLoss - entryPrice);
+
+        // Sanity fallback: if distance is zero or missing, ensure minimum safe distance
+        if (!intendedTpDist || intendedTpDist <= 0) {
+            intendedTpDist = fillPrice * 0.0035;
+        }
+        if (!intendedSlDist || intendedSlDist <= 0) {
+            intendedSlDist = intendedTpDist * 5.0;
+        }
+
+        // Strict Guarantee: Take Profit is ALWAYS in profit from actual fillPrice, Stop Loss is ALWAYS in loss
+        let adjTakeProfit = isLong
+            ? roundToTick(fillPrice + intendedTpDist, tickSize)
+            : roundToTick(fillPrice - intendedTpDist, tickSize);
+
+        let adjStopLoss = isLong
+            ? roundToTick(fillPrice - intendedSlDist, tickSize)
+            : roundToTick(fillPrice + intendedSlDist, tickSize);
+
         let adjTakeProfitTrigger = takeProfitTrigger;
+        let adjStopLossTrigger   = stopLossTrigger;
+
+        if (takeProfitTrigger && entryPrice > 0) {
+            const intendedTpTrigDist = Math.abs(takeProfitTrigger - entryPrice);
+            adjTakeProfitTrigger = isLong
+                ? roundToTick(fillPrice + intendedTpTrigDist, tickSize)
+                : roundToTick(fillPrice - intendedTpTrigDist, tickSize);
+        }
+        if (stopLossTrigger && entryPrice > 0) {
+            const intendedSlTrigDist = Math.abs(stopLossTrigger - entryPrice);
+            adjStopLossTrigger = isLong
+                ? roundToTick(fillPrice - intendedSlTrigDist, tickSize)
+                : roundToTick(fillPrice + intendedSlTrigDist, tickSize);
+        }
+
         if (fillPrice !== entryPrice && entryPrice > 0) {
-            const priceDelta = fillPrice - entryPrice;
-            adjStopLoss   = roundToTick(stopLoss   + priceDelta, tickSize);
-            adjTakeProfit = roundToTick(takeProfit + priceDelta, tickSize);
-            if (stopLossTrigger)   adjStopLossTrigger   = roundToTick(stopLossTrigger   + priceDelta, tickSize);
-            if (takeProfitTrigger) adjTakeProfitTrigger = roundToTick(takeProfitTrigger + priceDelta, tickSize);
-            console.log(`[ExecutionEngine] 📍 Adjusted SL/TP for price slippage: entry $${entryPrice} → fill $${fillPrice} (Δ${priceDelta > 0 ? '+' : ''}${priceDelta.toFixed(4)}). New SL=$${adjStopLoss} (trig $${adjStopLossTrigger}), TP=$${adjTakeProfit} (trig $${adjTakeProfitTrigger})`);
+            console.log(`[ExecutionEngine] 📍 Re-anchored SL/TP to fill price: entry $${entryPrice} → fill $${fillPrice}. New SL=$${adjStopLoss} (trig $${adjStopLossTrigger}), TP=$${adjTakeProfit} (trig $${adjTakeProfitTrigger})`);
         }
 
         // Calculate estimated fees via CostEngine

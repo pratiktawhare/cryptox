@@ -227,7 +227,9 @@ class PositionMonitor {
         );
 
         // Check Take Profit hit (Limit filled once price reaches target)
-        const hitTP = isLong ? currentPrice >= trade.takeProfit : currentPrice <= trade.takeProfit;
+        // Guard: TP can ONLY trigger if the price has moved profitably beyond entryPrice
+        const inProfit = isLong ? (currentPrice > trade.entryPrice) : (currentPrice < trade.entryPrice);
+        const hitTP = inProfit && (isLong ? currentPrice >= trade.takeProfit : currentPrice <= trade.takeProfit);
 
         // Check Stop Loss hit:
         // Early trigger: activates when price crosses stopLossTrigger (or stopLoss if trigger not set)
@@ -698,15 +700,24 @@ class PositionMonitor {
         try {
             const sym = (symbol || '').replace('USD', '/USD');
             const pnlStr = `${netPnl >= 0 ? '+' : ''}$${Number(netPnl).toFixed(2)}`;
-            let title = isWin ? `🎯 Target Hit: ${sym}` : `🛑 Stop Loss: ${sym}`;
-            let message = `${isWin ? 'Profit' : 'Loss'}: ${pnlStr} on ${direction.toUpperCase()} @ $${Number(exitPrice).toFixed(4)}`;
+            let title = '';
+            let message = '';
 
-            if (exitReason === 'smart_loss_guard') {
+            if (exitReason === 'take_profit') {
+                title = `🎯 Target Hit: ${sym}`;
+                message = `Take Profit filled: ${pnlStr} on ${direction.toUpperCase()} @ $${Number(exitPrice).toFixed(4)}`;
+            } else if (exitReason === 'stop_loss') {
+                title = `🛑 Stop Loss Hit: ${sym}`;
+                message = `Stop Loss executed: ${pnlStr} on ${direction.toUpperCase()} @ $${Number(exitPrice).toFixed(4)}`;
+            } else if (exitReason === 'smart_loss_guard') {
                 title = `🛡️ Smart Loss Guard: ${sym}`;
                 message = `Auto-exited early on trend reversal: ${pnlStr} on ${direction.toUpperCase()} @ $${Number(exitPrice).toFixed(4)}`;
             } else if (exitReason === 'breakeven' || isBreakeven) {
                 title = `🛡️ Breakeven Exit: ${sym}`;
                 message = `Exited at Breakeven Stop Loss: ${pnlStr} on ${direction.toUpperCase()} @ $${Number(exitPrice).toFixed(4)}`;
+            } else {
+                title = isWin ? `🎯 Trade Closed (Win): ${sym}` : `🛑 Trade Closed: ${sym}`;
+                message = `${isWin ? 'Profit' : 'Loss'}: ${pnlStr} on ${direction.toUpperCase()} @ $${Number(exitPrice).toFixed(4)}`;
             }
 
             if (notificationService?._createAndEmit) {
@@ -715,7 +726,7 @@ class PositionMonitor {
                     title,
                     message,
                     priority: 'high',
-                    sound: exitReason === 'smart_loss_guard' || exitReason === 'breakeven' || isBreakeven ? 'stoploss_hit' : (isWin ? 'target_hit' : 'stoploss_hit'),
+                    sound: exitReason === 'take_profit' ? 'target_hit' : 'stoploss_hit',
                 }).catch(() => {});
             }
         } catch (e) {
