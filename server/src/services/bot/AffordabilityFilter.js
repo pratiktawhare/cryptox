@@ -86,6 +86,18 @@ function filterAffordable(symbols, config, actualAvailableBalance, wsManager, pr
             continue;
         }
 
+        // ── 24h Volume / Liquidity check (filters illiquid contracts prone to slippage) ──
+        const minVol = config.breakoutMin24hVolumeUSDT || 0;
+        if (minVol > 0 && wsManager?.getTicker) {
+            const ticker = wsManager.getTicker(symbol);
+            const vol24h = parseFloat(ticker?.volume24h || ticker?.volume || 0);
+            const turnover24h = parseFloat(ticker?.turnover24h || (vol24h * price) || 0);
+            if (turnover24h > 0 && turnover24h < minVol) {
+                skipped.push({ symbol, reason: 'low_liquidity', minCost: 0, budget: turnover24h });
+                continue;
+            }
+        }
+
         // ── Product spec: min order quantity and contract value ──────────────
         const spec = getProductSpec(symbol, productCatalog);
         if (!spec || spec.minQty <= 0) {

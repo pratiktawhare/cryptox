@@ -520,9 +520,23 @@ class TradingBot {
         // ── Strategy Mode Branching ──────────────────────────────────────────
         const strategyType = config.strategyType || 'trend_pullback';
 
-        if (strategyType === 'breakout_straddle') {
-            await this._scanBreakoutStraddle(config, userId, availableBalance, effectiveBudget, allSymbols, affordableSymbols, unheldAffordable, maxAllowed, openTrades);
+        if (strategyType === 'radar_fleet' || strategyType === 'breakout_straddle') {
+            const isFleet = strategyType === 'radar_fleet';
+            await this._scanBreakoutStraddle(config, userId, availableBalance, effectiveBudget, allSymbols, affordableSymbols, unheldAffordable, maxAllowed, openTrades, isFleet);
             return;
+        }
+
+        if (strategyType === 'adaptive_hybrid') {
+            // First check if any affordable coin is in a tight volatility squeeze
+            const maxCandidates = config.breakoutCandidatesCount || 50;
+            const breakoutCandidates = unheldAffordable.slice(0, Math.min(30, maxCandidates));
+            const setups = await breakoutScanner.scanAll(breakoutCandidates, config, this.wsManager);
+            if (setups && setups.length > 0) {
+                console.log(`[TradingBot] 🔀 [Adaptive Hybrid] Found ${setups.length} coin(s) in active squeeze! Routing to Radar Fleet pipeline...`);
+                await this._scanBreakoutStraddle(config, userId, availableBalance, effectiveBudget, allSymbols, affordableSymbols, unheldAffordable, maxAllowed, openTrades, true);
+                return;
+            }
+            console.log(`[TradingBot] 🔀 [Adaptive Hybrid] No coins in tight squeeze. Routing to Trend Pullback pipeline...`);
         }
 
         // ── 4. Technical Analysis & Candidate Scoring ──────────────────────────
@@ -676,11 +690,11 @@ class TradingBot {
         // Never chase the impulse climax. Anchor entry to dynamic support (EMA9)
         // or a 0.30%–0.50% ATR discount level.
         const currentLivePrice = best.snapshot.close;
-        const ema9_5m          = best.snapshot['5m']?.ema9;
-        const ema21_5m         = best.snapshot['5m']?.ema21;
-        const atr5m            = best.snapshot['5m']?.atr || (currentLivePrice * 0.005);
-        const spec             = this.productCatalog?.getBySymbol(best.symbol) || productCatalog.getBySymbol(best.symbol);
-        const tickSize         = parseFloat(spec?.tick_size || 0.001);
+        const ema9_5m = best.snapshot['5m']?.ema9;
+        const ema21_5m = best.snapshot['5m']?.ema21;
+        const atr5m = best.snapshot['5m']?.atr || (currentLivePrice * 0.005);
+        const spec = this.productCatalog?.getBySymbol(best.symbol) || productCatalog.getBySymbol(best.symbol);
+        const tickSize = parseFloat(spec?.tick_size || 0.001);
 
         const roundToTick = (p, tick) => {
             if (!tick || tick <= 0) return p;
@@ -817,14 +831,19 @@ class TradingBot {
      * 2. Calculates Upper Resistance & Lower Support Tripwires with ATR buffers.
      * 3. Arms BreakoutWatcher to monitor live WebSocket ticks for instant breach execution.
      */
-    async _scanBreakoutStraddle(config, userId, availableBalance, effectiveBudget, allSymbols, affordableSymbols, unheldAffordable, maxAllowed, openTrades) {
-        const coinsToScan = unheldAffordable.slice(0, 25);
-        console.log(`[TradingBot] ⚡ Scanning ${coinsToScan.length} coins for Breakout Straddle (TTM Squeeze)...`);
+    async _scanBreakoutStraddle(config, userId, availableBalance, effectiveBudget, allSymbols, affordableSymbols, unheldAffordable, maxAllowed, openTrades, isFleet = false) {
+        const maxCandidates = config.breakoutCandidatesCount || 50;
+        const coinsToScan = unheldAffordable.slice(0, maxCandidates);
+        const modeLabel = isFleet ? 'Radar Fleet' : 'Breakout Straddle';
+        console.log(`[TradingBot] ⚡ Scanning ${coinsToScan.length} coins for ${modeLabel} (Crypto-Calibrated Squeeze)...`);
 
         const setups = await breakoutScanner.scanAll(coinsToScan, config, this.wsManager);
 
         if (!setups || setups.length === 0) {
-            console.log(`[TradingBot] [Breakout] No coins in volatility squeeze among ${coinsToScan.length} scanned.`);
+            const minBars = config.breakoutSqueezeBars !== undefined ? config.breakoutSqueezeBars : 2;
+            const kcMult = config.breakoutKcMultiplier !== undefined ? config.breakoutKcMultiplier : 2.0;
+            const maxBw = config.breakoutMaxBandwidth !== undefined ? config.breakoutMaxBandwidth : 0.015;
+            console.log(`[TradingBot] [${modeLabel}] No coins in volatility squeeze among ${coinsToScan.length} scanned.`);
             this.lastScanResult = {
                 timestamp: new Date(),
                 totalScanned: allSymbols.length,
@@ -832,7 +851,7 @@ class TradingBot {
                 bestSymbol: null,
                 bestScore: null,
                 decision: 'NO_SQUEEZE',
-                reason: `Scanned ${coinsToScan.length} coins. None met ${config.breakoutSqueezeBars || 3}+ bar TTM squeeze criteria.`,
+                reason: `Scanned ${coinsToScan.length} coins. None met ${minBars}+ bar compression criteria (KC ${kcMult} / BW ${(maxBw * 100).toFixed(1)}%).`,
             };
             await this._recordSignal({
                 userId,
@@ -840,14 +859,14 @@ class TradingBot {
                 direction: null,
                 score: 0,
                 decision: 'NO_SQUEEZE',
-                rejectReason: `No coins met ${config.breakoutSqueezeBars || 3}+ consecutive 5m squeeze bars`,
+                rejectReason: `No coins met ${minBars}+ consecutive 5m compression bars (KC ${kcMult} / BW ${(maxBw * 100).toFixed(1)}%)`,
                 walletBalance: availableBalance,
                 effectiveBudget,
                 affordableSymbols: affordableSymbols.length,
                 totalScanned: allSymbols.length,
             });
             await this._logEvent(userId, 'NO_SIGNAL_FOUND', 'info',
-                `Breakout scan completed. No coins in squeeze among ${coinsToScan.length} candidates.`
+                `${modeLabel} scan completed. No coins in squeeze among ${coinsToScan.length} candidates.`
             );
             return;
         }
@@ -858,9 +877,32 @@ class TradingBot {
             return (a.bandwidth || 0) - (b.bandwidth || 0);
         });
 
-        // Arm top setup(s) up to available slots
-        const availableSlots = Math.max(1, maxAllowed - openTrades.length);
-        const toArm = setups.slice(0, Math.min(availableSlots, 2));
+        // Filter out symbols that are ALREADY actively armed in BreakoutWatcher
+        const currentlyArmed = new Set(breakoutWatcher.getArmedTripwires().map(t => t.symbol));
+        const freshSetups = setups.filter(s => !currentlyArmed.has(s.symbol));
+
+        if (freshSetups.length === 0) {
+            console.log(`[TradingBot] [${modeLabel}] All ${setups.length} qualified compressed coins are already actively armed in BreakoutWatcher.`);
+            return;
+        }
+
+        // Arm top setup(s): If Radar Fleet, arm up to breakoutMaxArmedFleet (default 15)
+        let toArm = [];
+        if (isFleet) {
+            const maxFleet = config.breakoutMaxArmedFleet || 15;
+            const currentArmedCount = currentlyArmed.size;
+            const slotsAvailableToArm = Math.max(0, maxFleet - currentArmedCount);
+            toArm = freshSetups.slice(0, slotsAvailableToArm);
+
+            if (toArm.length === 0) {
+                console.log(`[TradingBot] [Radar Fleet] Active fleet already at capacity (${currentArmedCount}/${maxFleet} armed).`);
+                return;
+            }
+            console.log(`[TradingBot] 📡 [Radar Fleet] Arming ${toArm.length} fresh coiled coins (Active Fleet: ${currentArmedCount + toArm.length}/${maxFleet})...`);
+        } else {
+            const availableSlots = Math.max(1, maxAllowed - openTrades.length);
+            toArm = freshSetups.slice(0, Math.min(availableSlots, 2));
+        }
 
         for (const setup of toArm) {
             const spec = this.productCatalog?.getBySymbol(setup.symbol) || productCatalog.getBySymbol(setup.symbol);
@@ -897,6 +939,7 @@ class TradingBot {
         }
 
         const top = toArm[0];
+        const armedTotal = breakoutWatcher.armedTripwires.size;
         this.lastScanResult = {
             timestamp: new Date(),
             totalScanned: allSymbols.length,
@@ -904,7 +947,9 @@ class TradingBot {
             bestSymbol: top.symbol,
             bestScore: 8,
             decision: 'TRIPWIRE_ARMED',
-            reason: `Armed dual tripwires for ${top.symbol} (Squeeze: ${top.squeezeBars} bars). Long @ $${top.upperTripwire.toFixed(4)}, Short @ $${top.lowerTripwire.toFixed(4)}`,
+            reason: isFleet 
+                ? `Armed ${toArm.length} fresh tripwires (Active Radar Fleet: ${armedTotal} coins watching). Top: ${top.symbol} (Squeeze: ${top.squeezeBars} bars).`
+                : `Armed dual tripwires for ${top.symbol} (Squeeze: ${top.squeezeBars} bars). Long @ $${top.upperTripwire.toFixed(4)}, Short @ $${top.lowerTripwire.toFixed(4)}`,
         };
 
         await this._recordSignal({
@@ -918,6 +963,11 @@ class TradingBot {
             effectiveBudget,
             affordableSymbols: affordableSymbols.length,
             totalScanned: allSymbols.length,
+            metadata: {
+                isFleet,
+                fleetArmedCount: armedTotal,
+                newlyArmed: toArm.map(t => t.symbol),
+            },
         });
     }
 

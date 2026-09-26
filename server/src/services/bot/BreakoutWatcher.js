@@ -27,6 +27,7 @@ class BreakoutWatcher {
         this._isAttached = false;
         this._processing = new Set(); // symbols currently executing
         this._pollTimer = null;
+        this.lastTradeExecutionTime = 0; // Throttle to prevent correlation cascades
     }
 
     /**
@@ -195,16 +196,62 @@ class BreakoutWatcher {
     }
 
     /**
-     * Internal: Fires the breakout trade with RVOL surge validation and OCO cancellation.
+     * Returns fleet stats and all armed symbols.
+     */
+    getFleetStats() {
+        return {
+            armedCount: this.armedTripwires.size,
+            symbols: Array.from(this.armedTripwires.keys()),
+            tripwires: Array.from(this.armedTripwires.values()).map(t => ({
+                symbol: t.symbol,
+                upperTripwire: t.upperTripwire,
+                lowerTripwire: t.lowerTripwire,
+                squeezeBars: t.squeezeBars,
+                bandwidth: t.bandwidth,
+                armedAt: t.armedAt,
+            })),
+        };
+    }
+
+    /**
+     * Internal: Fires the breakout trade with multi-layer defense gates (throttle, capacity, RVOL).
      */
     async _triggerBreakout(tripwire, direction, triggerPrice) {
         const sym = tripwire.symbol;
         this._processing.add(sym);
 
         try {
-            console.log(`[BreakoutWatcher] ⚡ BREACH DETECTED for ${direction.toUpperCase()} ${sym} @ $${triggerPrice}! Checking RVOL volume surge...`);
+            console.log(`[BreakoutWatcher] ⚡ BREACH DETECTED for ${direction.toUpperCase()} ${sym} @ $${triggerPrice}! Checking defense gates...`);
 
-            // 1. Advancification: Relative Volume (RVOL) Surge Confirmation
+            // ── Gate 1: Correlation / Velocity Throttle (Flash-Crash Protection) ──
+            const throttleSec = tripwire.config?.breakoutThrottleSeconds ?? 15;
+            const timeSinceLast = (Date.now() - this.lastTradeExecutionTime) / 1000;
+            if (this.lastTradeExecutionTime > 0 && timeSinceLast < throttleSec) {
+                console.log(`[BreakoutWatcher] ⏱️ Breach throttled on ${sym}: only ${timeSinceLast.toFixed(1)}s since last trade (min throttle: ${throttleSec}s to prevent correlation spikes)`);
+                this._processing.delete(sym);
+                return;
+            }
+
+            // ── Gate 2: Live Portfolio Capacity Check ──
+            const maxOpen = tripwire.config?.maxOpenPositions ?? 5;
+            let openCount = 0;
+            try {
+                if (tripwire.mode === 'paper') {
+                    const PaperPosition = require('../../models/PaperPosition');
+                    openCount = await PaperPosition.countDocuments({ status: 'OPEN' });
+                } else {
+                    const Position = require('../../models/Position');
+                    openCount = await Position.countDocuments({ userId: tripwire.userId, status: 'OPEN' });
+                }
+            } catch (e) { /* ignore */ }
+
+            if (openCount >= maxOpen) {
+                console.log(`[BreakoutWatcher] 🛑 Portfolio capacity full (${openCount}/${maxOpen} positions). Breach on ${sym} held in radar.`);
+                this._processing.delete(sym);
+                return;
+            }
+
+            // ── Gate 3: Relative Volume (RVOL) Surge Confirmation ──
             let candles1m = candleStore.getCandles(sym, '1m', 25);
             if (!candles1m || candles1m.length < 15) {
                 try {
@@ -220,19 +267,19 @@ class BreakoutWatcher {
                 const currentVol = candles1m[candles1m.length - 1]?.volume || avgVol;
                 rvol = avgVol > 0 ? (currentVol / avgVol) : 2.0;
             } else {
-                // If candle history is fresh and volume history unavailable, accept with nominal surge
                 rvol = 2.0;
             }
 
-            const minRvol = tripwire.config?.breakoutRvolMin || 1.8;
+            const minRvol = tripwire.config?.breakoutRvolMin || 1.2;
             if (rvol < minRvol) {
-                console.log(`[BreakoutWatcher] ⚠️ Breach skipped: RVOL ${rvol.toFixed(2)}x < ${minRvol}x threshold (likely low-volume fakeout)`);
+                console.log(`[BreakoutWatcher] ⚠️ Breach skipped on ${sym}: RVOL ${rvol.toFixed(2)}x < ${minRvol}x threshold (likely low-volume fakeout)`);
                 this._processing.delete(sym);
-                return; // Wait for real institutional volume surge
+                return; // Wait for real volume surge
             }
 
-            // 2. Instant OCO (One-Cancels-the-Other) — Disarm the tripwire so opposite side is dead
+            // ── All Defense Gates Passed! Instant OCO: Disarm symbol so opposing side is dead ──
             this.armedTripwires.delete(sym);
+            this.lastTradeExecutionTime = Date.now();
 
             // 3. Select SL / TP based on direction
             const isLong = direction === 'long';

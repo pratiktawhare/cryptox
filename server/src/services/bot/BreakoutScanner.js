@@ -13,25 +13,33 @@ const { calcATR } = require('./indicators/atr');
 
 class BreakoutScanner {
     /**
-     * Checks if a symbol's 5m candles have been in a TTM Squeeze for consecutive bars.
+     * Checks if a symbol's 5m candles have been in a Volatility Compression / Squeeze for consecutive bars.
+     *
+     * In crypto perpetuals, standard 2.0σ BB inside 1.5 ATR KC is statistically rare (occurring <3% of the time).
+     * We support crypto-calibrated compression:
+     * 1. Standard Crypto Keltner: BB(2.0) inside KC(kcMultiplier, default 2.0).
+     * 2. Bollinger Bandwidth Compression: Bandwidth <= maxBandwidth (default 1.5% / 0.015).
      *
      * @param {object[]} candles5m - Array of 5m candles
-     * @param {number} minConsecutiveBars - Default 3
-     * @returns {{ inSqueeze: boolean, consecutiveCount: number, currentBandwidth: number|null }}
+     * @param {number} minConsecutiveBars - Default 2
+     * @param {number} kcMultiplier - Default 2.0
+     * @param {number} maxBandwidth - Default 0.015 (1.5%)
+     * @returns {{ inSqueeze: boolean, consecutiveCount: number, currentBandwidth: number|null, squeezeType: string|null }}
      */
-    checkSqueezeHistory(candles5m, minConsecutiveBars = 3) {
+    checkSqueezeHistory(candles5m, minConsecutiveBars = 2, kcMultiplier = 2.0, maxBandwidth = 0.015) {
         if (!candles5m || candles5m.length < 25) {
-            return { inSqueeze: false, consecutiveCount: 0, currentBandwidth: null };
+            return { inSqueeze: false, consecutiveCount: 0, currentBandwidth: null, squeezeType: null };
         }
 
         // Use confirmed closed candles
         const closed = candles5m.slice(0, -1);
         if (closed.length < 22) {
-            return { inSqueeze: false, consecutiveCount: 0, currentBandwidth: null };
+            return { inSqueeze: false, consecutiveCount: 0, currentBandwidth: null, squeezeType: null };
         }
 
         let consecutive = 0;
         let latestBandwidth = null;
+        let latestSqueezeType = null;
 
         // Check the last N bars in reverse
         for (let i = closed.length - 1; i >= Math.max(0, closed.length - 10); i--) {
@@ -41,7 +49,7 @@ class BreakoutScanner {
             const subLows   = sub.map(c => c.low);
 
             const bb = calcBollingerBands(subCloses, 20, 2.0);
-            const kc = calcKeltnerChannels(subHighs, subLows, subCloses, 20, 14, 1.5);
+            const kc = calcKeltnerChannels(subHighs, subLows, subCloses, 20, 14, kcMultiplier);
 
             if (!bb || !kc) break;
 
@@ -49,9 +57,17 @@ class BreakoutScanner {
                 latestBandwidth = bb.bandwidth;
             }
 
-            const squeeze = bb.upper <= kc.upper && bb.lower >= kc.lower;
+            const inKeltner = bb.upper <= kc.upper && bb.lower >= kc.lower;
+            const inBandwidth = bb.bandwidth <= maxBandwidth;
+            const squeeze = inKeltner || inBandwidth;
+
             if (squeeze) {
                 consecutive++;
+                if (!latestSqueezeType) {
+                    if (inKeltner && inBandwidth) latestSqueezeType = 'DUAL_COMPRESSION';
+                    else if (inKeltner) latestSqueezeType = 'KC_CONTAINED';
+                    else latestSqueezeType = 'BANDWIDTH_SQUEEZE';
+                }
             } else {
                 break; // streak broken
             }
@@ -61,6 +77,7 @@ class BreakoutScanner {
             inSqueeze: consecutive >= minConsecutiveBars,
             consecutiveCount: consecutive,
             currentBandwidth: latestBandwidth,
+            squeezeType: latestSqueezeType,
         };
     }
 
@@ -87,8 +104,11 @@ class BreakoutScanner {
         const closedHighs  = closed5m.map(c => c.high);
         const closedLows   = closed5m.map(c => c.low);
 
-        const minSqueezeBars = config.breakoutSqueezeBars || 3;
-        const squeezeStatus = this.checkSqueezeHistory(candles5m, minSqueezeBars);
+        const minSqueezeBars = config.breakoutSqueezeBars !== undefined ? config.breakoutSqueezeBars : 2;
+        const kcMultiplier = config.breakoutKcMultiplier !== undefined ? config.breakoutKcMultiplier : 2.0;
+        const maxBandwidth = config.breakoutMaxBandwidth !== undefined ? config.breakoutMaxBandwidth : 0.015;
+
+        const squeezeStatus = this.checkSqueezeHistory(candles5m, minSqueezeBars, kcMultiplier, maxBandwidth);
 
         if (!squeezeStatus.inSqueeze) {
             return null; // Not coiled enough
@@ -132,6 +152,7 @@ class BreakoutScanner {
             symbol: sym,
             inSqueeze: true,
             squeezeBars: squeezeStatus.consecutiveCount,
+            squeezeType: squeezeStatus.squeezeType,
             bandwidth: squeezeStatus.currentBandwidth,
             currentPrice,
             rangeHigh,

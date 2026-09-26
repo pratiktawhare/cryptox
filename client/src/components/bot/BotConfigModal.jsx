@@ -22,8 +22,14 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
     const [walletParts, setWalletParts] = useState(config.walletParts ?? 1);
     const [smartGuard, setSmartGuard] = useState(config.smartLossGuard ?? false);
     const [strategyType, setStrategyType] = useState(config.strategyType ?? 'trend_pullback');
-    const [breakoutSqueezeBars, setBreakoutSqueezeBars] = useState(config.breakoutSqueezeBars ?? 3);
-    const [breakoutRvolMin, setBreakoutRvolMin] = useState(config.breakoutRvolMin ?? 1.8);
+    const [breakoutSqueezeBars, setBreakoutSqueezeBars] = useState(config.breakoutSqueezeBars ?? 2);
+    const [breakoutKcMultiplier, setBreakoutKcMultiplier] = useState(config.breakoutKcMultiplier ?? 2.0);
+    const [breakoutMaxBandwidth, setBreakoutMaxBandwidth] = useState(config.breakoutMaxBandwidth ?? 0.015);
+    const [breakoutCandidatesCount, setBreakoutCandidatesCount] = useState(config.breakoutCandidatesCount ?? 50);
+    const [breakoutMaxArmedFleet, setBreakoutMaxArmedFleet] = useState(config.breakoutMaxArmedFleet ?? 15);
+    const [breakoutThrottleSeconds, setBreakoutThrottleSeconds] = useState(config.breakoutThrottleSeconds ?? 15);
+    const [breakoutMin24hVolumeUSDT, setBreakoutMin24hVolumeUSDT] = useState(config.breakoutMin24hVolumeUSDT ?? 50000);
+    const [breakoutRvolMin, setBreakoutRvolMin] = useState(config.breakoutRvolMin ?? 1.2);
     const [breakoutTargetRoiPct, setBreakoutTargetRoiPct] = useState(config.breakoutTargetRoiPct ?? 10);
 
     const [saving, setSaving] = useState(false);
@@ -48,8 +54,14 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
             setWalletParts(config.walletParts ?? 1);
             setSmartGuard(config.smartLossGuard ?? false);
             setStrategyType(config.strategyType ?? 'trend_pullback');
-            setBreakoutSqueezeBars(config.breakoutSqueezeBars ?? 3);
-            setBreakoutRvolMin(config.breakoutRvolMin ?? 1.8);
+            setBreakoutSqueezeBars(config.breakoutSqueezeBars ?? 2);
+            setBreakoutKcMultiplier(config.breakoutKcMultiplier ?? 2.0);
+            setBreakoutMaxBandwidth(config.breakoutMaxBandwidth ?? 0.015);
+            setBreakoutCandidatesCount(config.breakoutCandidatesCount ?? 50);
+            setBreakoutMaxArmedFleet(config.breakoutMaxArmedFleet ?? 15);
+            setBreakoutThrottleSeconds(config.breakoutThrottleSeconds ?? 15);
+            setBreakoutMin24hVolumeUSDT(config.breakoutMin24hVolumeUSDT ?? 50000);
+            setBreakoutRvolMin(config.breakoutRvolMin ?? 1.2);
             setBreakoutTargetRoiPct(config.breakoutTargetRoiPct ?? 10);
         }
     }, [config, mode]);
@@ -87,6 +99,12 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                 smartLossGuard: Boolean(smartGuard),
                 strategyType,
                 breakoutSqueezeBars: Number(breakoutSqueezeBars),
+                breakoutKcMultiplier: Number(breakoutKcMultiplier),
+                breakoutMaxBandwidth: Number(breakoutMaxBandwidth),
+                breakoutCandidatesCount: Number(breakoutCandidatesCount),
+                breakoutMaxArmedFleet: Number(breakoutMaxArmedFleet),
+                breakoutThrottleSeconds: Number(breakoutThrottleSeconds),
+                breakoutMin24hVolumeUSDT: Number(breakoutMin24hVolumeUSDT),
                 breakoutRvolMin: Number(breakoutRvolMin),
                 breakoutTargetRoiPct: Number(breakoutTargetRoiPct),
             });
@@ -116,8 +134,14 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
         setWalletParts(1);
         setSmartGuard(false);
         setStrategyType('trend_pullback');
-        setBreakoutSqueezeBars(3);
-        setBreakoutRvolMin(1.8);
+        setBreakoutSqueezeBars(2);
+        setBreakoutKcMultiplier(2.0);
+        setBreakoutMaxBandwidth(0.015);
+        setBreakoutCandidatesCount(50);
+        setBreakoutMaxArmedFleet(15);
+        setBreakoutThrottleSeconds(15);
+        setBreakoutMin24hVolumeUSDT(50000);
+        setBreakoutRvolMin(1.2);
         setBreakoutTargetRoiPct(10);
     };
 
@@ -665,18 +689,25 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                                     desc: 'Dynamic EMA9 limit discount entry on trending coins.',
                                 },
                                 {
+                                    id: 'radar_fleet',
+                                    title: 'Radar Fleet',
+                                    badge: 'Multi-Asset Armada ★',
+                                    icon: '📡',
+                                    desc: 'Arms up to 15-20 coiled coins in parallel. Instant sub-second trigger on live breach.',
+                                },
+                                {
                                     id: 'breakout_straddle',
                                     title: 'Breakout Straddle',
-                                    badge: 'TTM Squeeze',
+                                    badge: 'Single / Dual Focus',
                                     icon: '⚡',
-                                    desc: 'Dual tripwires around range. Instant market entry on surge.',
+                                    desc: 'Dual tripwires around range. Focused on top 1-2 most compressed coins.',
                                 },
                                 {
                                     id: 'adaptive_hybrid',
                                     title: 'Adaptive Hybrid',
                                     badge: 'Smart Dual',
                                     icon: '🔀',
-                                    desc: 'Rides trend pullbacks; falls back to squeeze breakout if ranging.',
+                                    desc: 'Rides trend pullbacks; auto-deploys Radar Fleet if market is compressing.',
                                 },
                             ].map(st => (
                                 <button
@@ -711,20 +742,42 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                             ))}
                         </div>
 
-                        {/* Breakout Straddle Parameters Box */}
-                        {(strategyType === 'breakout_straddle' || strategyType === 'adaptive_hybrid') && (
+                        {/* Breakout Straddle & Radar Fleet Parameters Box */}
+                        {(strategyType === 'radar_fleet' || strategyType === 'breakout_straddle' || strategyType === 'adaptive_hybrid') && (
                             <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl space-y-3.5">
                                 <div className="flex items-center justify-between">
                                     <label className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
-                                        <span>⚡</span> Breakout Straddle Advancifications
+                                        <span>📡</span> {strategyType === 'radar_fleet' ? 'Radar Fleet Armada Controls' : 'Breakout Straddle Calibration'}
                                     </label>
                                     <span className="text-[10px] font-bold text-amber-400/80 bg-amber-400/10 px-2 py-0.5 rounded">
-                                        Anti-Fakeout Mode Active
+                                        {strategyType === 'radar_fleet' ? 'Sub-Second WebSocket Monitoring' : 'Crypto Anti-Fakeout Active'}
                                     </span>
                                 </div>
 
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                    {/* Squeeze Bars */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                    {/* Squeeze Sensitivity Preset */}
+                                    <div>
+                                        <label className="text-[11px] font-semibold text-crypto-heading block mb-1">
+                                            Squeeze Sensitivity / Mode
+                                        </label>
+                                        <select
+                                            value={`${breakoutKcMultiplier}-${breakoutMaxBandwidth}`}
+                                            onChange={e => {
+                                                const [kc, bw] = e.target.value.split('-').map(Number);
+                                                setBreakoutKcMultiplier(kc);
+                                                setBreakoutMaxBandwidth(bw);
+                                            }}
+                                            className="w-full px-2.5 py-1.5 rounded-xl bg-crypto-bg border border-crypto-border text-crypto-heading text-xs font-bold"
+                                        >
+                                            <option value="2-0.015">Balanced (KC 2.0 / BW ≤ 1.5% ★)</option>
+                                            <option value="2.2-0.02">High Frequency (KC 2.2 / BW ≤ 2.0%)</option>
+                                            <option value="1.8-0.01">Ultra-Tight (KC 1.8 / BW ≤ 1.0%)</option>
+                                            <option value="1.5-0.008">Strict Equities (KC 1.5 / BW ≤ 0.8%)</option>
+                                        </select>
+                                        <span className="text-[10px] text-crypto-muted mt-0.5 block">Compression criteria</span>
+                                    </div>
+
+                                    {/* Min Squeeze Bars */}
                                     <div>
                                         <label className="text-[11px] font-semibold text-crypto-heading block mb-1">
                                             Min Squeeze Bars (5m)
@@ -734,12 +787,13 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                                             onChange={e => setBreakoutSqueezeBars(parseInt(e.target.value))}
                                             className="w-full px-2.5 py-1.5 rounded-xl bg-crypto-bg border border-crypto-border text-crypto-heading text-xs font-bold"
                                         >
-                                            <option value={2}>2 Bars (10 min)</option>
-                                            <option value={3}>3 Bars (15 min - Recommended ★)</option>
-                                            <option value={4}>4 Bars (20 min)</option>
-                                            <option value={6}>6 Bars (30 min - Ultra Coiled)</option>
+                                            <option value={1}>1 Bar (Fast Trigger - 5m)</option>
+                                            <option value={2}>2 Bars (Active - 10m ★)</option>
+                                            <option value={3}>3 Bars (Patient - 15m)</option>
+                                            <option value={4}>4 Bars (20m)</option>
+                                            <option value={6}>6 Bars (30m Deep Coil)</option>
                                         </select>
-                                        <span className="text-[10px] text-crypto-muted mt-0.5 block">BB inside Keltner</span>
+                                        <span className="text-[10px] text-crypto-muted mt-0.5 block">Consecutive flat bars</span>
                                     </div>
 
                                     {/* RVOL Surge Threshold */}
@@ -752,12 +806,13 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                                             onChange={e => setBreakoutRvolMin(parseFloat(e.target.value))}
                                             className="w-full px-2.5 py-1.5 rounded-xl bg-crypto-bg border border-crypto-border text-crypto-heading text-xs font-bold"
                                         >
-                                            <option value={1.2}>1.2x (Aggressive)</option>
+                                            <option value={1.1}>1.1x (Fast Scalp)</option>
+                                            <option value={1.2}>1.2x (Active Scalp ★)</option>
                                             <option value={1.5}>1.5x (Moderate)</option>
-                                            <option value={1.8}>1.8x (Institutional ★)</option>
+                                            <option value={1.8}>1.8x (Institutional)</option>
                                             <option value={2.2}>2.2x (Ultra Strict)</option>
                                         </select>
-                                        <span className="text-[10px] text-crypto-muted mt-0.5 block">Filters low-vol wicks</span>
+                                        <span className="text-[10px] text-crypto-muted mt-0.5 block">Breach volume filter</span>
                                     </div>
 
                                     {/* Breakout Target ROI */}
@@ -777,10 +832,62 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                                         </select>
                                         <span className="text-[10px] text-crypto-muted mt-0.5 block">Fast scalp exit</span>
                                     </div>
+
+                                    {/* Radar Fleet Size */}
+                                    <div>
+                                        <label className="text-[11px] font-semibold text-crypto-heading block mb-1">
+                                            Armed Fleet Capacity
+                                        </label>
+                                        <select
+                                            value={breakoutMaxArmedFleet}
+                                            onChange={e => setBreakoutMaxArmedFleet(parseInt(e.target.value))}
+                                            className="w-full px-2.5 py-1.5 rounded-xl bg-crypto-bg border border-crypto-border text-crypto-heading text-xs font-bold"
+                                        >
+                                            <option value={5}>5 Coins (Conservative)</option>
+                                            <option value={10}>10 Coins (Active)</option>
+                                            <option value={15}>15 Coins (Recommended ★)</option>
+                                            <option value={20}>20 Coins (Full Armada)</option>
+                                        </select>
+                                        <span className="text-[10px] text-crypto-muted mt-0.5 block">Simultaneous tripwires</span>
+                                    </div>
+
+                                    {/* Flash-Crash Throttle */}
+                                    <div>
+                                        <label className="text-[11px] font-semibold text-crypto-heading block mb-1">
+                                            Flash-Crash Throttle
+                                        </label>
+                                        <select
+                                            value={breakoutThrottleSeconds}
+                                            onChange={e => setBreakoutThrottleSeconds(parseInt(e.target.value))}
+                                            className="w-full px-2.5 py-1.5 rounded-xl bg-crypto-bg border border-crypto-border text-crypto-heading text-xs font-bold"
+                                        >
+                                            <option value={10}>10s (Fast Scalp)</option>
+                                            <option value={15}>15s (Recommended ★)</option>
+                                            <option value={30}>30s (Conservative)</option>
+                                        </select>
+                                        <span className="text-[10px] text-crypto-muted mt-0.5 block">Spacing between entries</span>
+                                    </div>
+
+                                    {/* Min 24h Volume */}
+                                    <div>
+                                        <label className="text-[11px] font-semibold text-crypto-heading block mb-1">
+                                            Min 24h Volume Filter
+                                        </label>
+                                        <select
+                                            value={breakoutMin24hVolumeUSDT}
+                                            onChange={e => setBreakoutMin24hVolumeUSDT(parseInt(e.target.value))}
+                                            className="w-full px-2.5 py-1.5 rounded-xl bg-crypto-bg border border-crypto-border text-crypto-heading text-xs font-bold"
+                                        >
+                                            <option value={25000}>$25,000 USDT</option>
+                                            <option value={50000}>$50,000 USDT (Recommended ★)</option>
+                                            <option value={100000}>$100,000 USDT (Top Tier)</option>
+                                        </select>
+                                        <span className="text-[10px] text-crypto-muted mt-0.5 block">Prevents slippage traps</span>
+                                    </div>
                                 </div>
 
                                 <div className="text-[10px] text-crypto-muted leading-relaxed pt-1 border-t border-amber-500/20">
-                                    💡 <strong>Dual Tripwire Mechanism:</strong> Upper level set at <code className="text-crypto-heading">Range High + 0.15× ATR</code>. Lower level set at <code className="text-crypto-heading">Range Low - 0.15× ATR</code>. Whichever breaches first with volume surge executes market entry, instantly cancelling the opposite side (OCO) and securing profit with early breakeven protection.
+                                    💡 <strong>Radar Fleet Architecture:</strong> Concurrently monitors up to {breakoutMaxArmedFleet} coiled coins on real-time WebSocket ticks ($0 margin cost until breach). The moment any coin breaks out with &ge; {breakoutRvolMin}x volume surge, it fires an instant market order and disarms the opposing trigger (OCO).
                                 </div>
                             </div>
                         )}

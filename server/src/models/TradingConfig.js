@@ -126,26 +126,74 @@ const tradingConfigSchema = new mongoose.Schema(
         // ── Strategy Selection ──────────────────────────────────────────────
         // 'trend_pullback'    = Buys pullbacks at EMA9 support during active trends (default)
         // 'breakout_straddle' = Arms dual tripwires around tight ranges, trades volatility expansion
-        // 'adaptive_hybrid'   = Auto-selects based on market regime (pullback on trends, breakout on squeeze)
+        // 'radar_fleet'       = Event-driven multi-asset armada. Arms up to 15-20 coiled coins simultaneously
+        // 'adaptive_hybrid'   = Auto-selects based on market regime (pullback on trends, radar fleet on squeeze)
         strategyType: {
             type: String,
-            enum: ['trend_pullback', 'breakout_straddle', 'adaptive_hybrid'],
+            enum: ['trend_pullback', 'breakout_straddle', 'radar_fleet', 'adaptive_hybrid'],
             default: 'trend_pullback',
         },
 
-        // ── Breakout Straddle Parameters ────────────────────────────────────
-        // Minimum consecutive 5m candles in a squeeze before arming tripwires
+        // ── Breakout Straddle & Radar Fleet Parameters ───────────────────────
+        // Maximum number of coiled symbols to arm simultaneously in the radar fleet (default: 15)
+        breakoutMaxArmedFleet: {
+            type: Number,
+            default: 15,
+            min: 3,
+            max: 30,
+        },
+
+        // Cooldown spacing (seconds) between consecutive breakout executions across the fleet (prevents flash-crash avalanches)
+        breakoutThrottleSeconds: {
+            type: Number,
+            default: 15,
+            min: 5,
+            max: 120,
+        },
+
+        // Minimum 24h trading volume in USDT to qualify for candidate pool (filters illiquid slippage)
+        breakoutMin24hVolumeUSDT: {
+            type: Number,
+            default: 50000,
+            min: 0,
+        },
+
+        // Minimum consecutive 5m candles in a squeeze before arming tripwires (crypto default: 2 bars)
         breakoutSqueezeBars: {
             type: Number,
-            default: 3,
+            default: 2,
             min: 1,
             max: 20,
         },
 
-        // Minimum relative volume surge required on breakout candle
+        // Keltner Channel multiplier for squeeze detection (2.0 is standard for crypto derivatives)
+        breakoutKcMultiplier: {
+            type: Number,
+            default: 2.0,
+            min: 1.0,
+            max: 3.0,
+        },
+
+        // Maximum Bollinger Bandwidth (e.g. 0.015 = 1.5%) to count as volatility compression
+        breakoutMaxBandwidth: {
+            type: Number,
+            default: 0.015,
+            min: 0.005,
+            max: 0.05,
+        },
+
+        // Number of affordable candidates to scan for breakout compression (default: 50)
+        breakoutCandidatesCount: {
+            type: Number,
+            default: 50,
+            min: 10,
+            max: 150,
+        },
+
+        // Minimum relative volume surge required on breakout candle (default: 1.2x for active execution)
         breakoutRvolMin: {
             type: Number,
-            default: 1.8,
+            default: 1.2,
             min: 1.0,
             max: 5.0,
         },

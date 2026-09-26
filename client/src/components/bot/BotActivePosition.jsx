@@ -321,7 +321,7 @@ function ArmedTripwireCard({ tripwire, livePrice }) {
 
             <div className="mt-2.5 flex items-center justify-between text-[10px] text-crypto-muted">
                 <span>🎯 OCO Active: First breach cancels opposite side immediately</span>
-                <span className="text-amber-400 font-semibold">⚡ RVOL ≥ 1.8x Surge Filter Enabled</span>
+                <span className="text-amber-400 font-semibold">⚡ RVOL &ge; {tripwire.config?.breakoutRvolMin || 1.2}x Surge Filter Active</span>
             </div>
         </div>
     );
@@ -355,13 +355,21 @@ export default function BotActivePosition({
                 {/* Armed Tripwires Radar */}
                 {armedTripwires && armedTripwires.length > 0 && (
                     <div className="space-y-3">
-                        {armedTripwires.map(tw => (
-                            <ArmedTripwireCard
-                                key={tw.symbol}
-                                tripwire={tw}
-                                livePrice={livePrices[tw.symbol]}
-                            />
-                        ))}
+                        <div className="flex items-center justify-between px-1">
+                            <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                                <span>📡</span> Active Radar Fleet ({armedTripwires.length} Coiled Coins Watching)
+                            </span>
+                            <span className="text-[10px] text-crypto-muted font-medium">Sub-Second WebSocket Breaches</span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {armedTripwires.map(tw => (
+                                <ArmedTripwireCard
+                                    key={tw.symbol}
+                                    tripwire={tw}
+                                    livePrice={livePrices[tw.symbol]}
+                                />
+                            ))}
+                        </div>
                     </div>
                 )}
 
@@ -490,6 +498,27 @@ export default function BotActivePosition({
                     )}
                 </div>
             </div>
+
+            {/* Armed Radar Fleet (simultaneously monitoring coiled setups) */}
+            {armedTripwires && armedTripwires.length > 0 && (
+                <div className="space-y-3">
+                    <div className="flex items-center justify-between px-1">
+                        <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                            <span>📡</span> Active Radar Fleet ({armedTripwires.length} Coiled Coins Watching)
+                        </span>
+                        <span className="text-[10px] text-crypto-muted font-medium">Sub-Second WebSocket Breaches</span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {armedTripwires.map(tw => (
+                            <ArmedTripwireCard
+                                key={tw.symbol}
+                                tripwire={tw}
+                                livePrice={livePrices[tw.symbol]}
+                            />
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Render each active position card */}
             <div className="space-y-4">
