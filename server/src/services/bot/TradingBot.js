@@ -1166,7 +1166,7 @@ class TradingBot {
                             trade.breakevenTriggeredCount = (trade.breakevenTriggeredCount || 0) + 1;
                             await trade.save();
 
-                            const neededConfirmations = trade.strategyType === 'breakout_straddle' ? 1 : 2;
+                            const neededConfirmations = (trade.strategyType === 'breakout_straddle' || trade.strategyType === 'radar_fleet') ? 1 : 2;
                             if (trade.breakevenTriggeredCount >= neededConfirmations) {
                                 // Confirmed over N consecutive cycles — execute breakeven SL move
                                 console.log(`[TradingBot] 🔒 Breakeven confirmed (${trade.breakevenTriggeredCount}/${neededConfirmations}) for ${trade.direction.toUpperCase()} ${symbol} (Current: $${currentPrice}, Trigger: $${beTriggerPrice.toFixed(4)}). Moving SL to Entry: $${trade.entryPrice}`);

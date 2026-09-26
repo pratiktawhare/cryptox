@@ -130,16 +130,41 @@ class BreakoutScanner {
         const upperTripwire = rangeHigh + atrBuffer;
         const lowerTripwire = rangeLow - atrBuffer;
 
-        // 4. Target Take Profit and Stop Loss geometry (for 20x leverage)
+        // 4. Target Take Profit and Stop Loss geometry (strictly follows bot setting config.slAtrMultiplier)
         const targetRoiPct = config.breakoutTargetRoiPct || 10; // e.g. 10% ROI
         const leverage = config.maxLeverage || 20;
         const targetPriceMovePct = targetRoiPct / leverage / 100; // e.g. 10 / 20 / 100 = 0.005 (0.50%)
 
         const takeProfitLong = upperTripwire * (1 + targetPriceMovePct);
-        const stopLossLong   = rangeHigh - (atrBuffer * 0.5); // just inside the broken range
-
         const takeProfitShort = lowerTripwire * (1 - targetPriceMovePct);
-        const stopLossShort   = rangeLow + (atrBuffer * 0.5);
+
+        // Stop Loss distance: Follow configured bot setting (config.slAtrMultiplier, default 5.0x ATR)
+        const slMultiplier = (config.slAtrMultiplier && config.slAtrMultiplier > 0) ? config.slAtrMultiplier : 5.0;
+        let slDistanceLong = atr * slMultiplier;
+        let slDistanceShort = atr * slMultiplier;
+
+        // Safeguard 1: Ensure SL does NOT exceed 85% of liquidation distance (e.g. max ~4.25% at 20x)
+        const maxSafeSlLong = upperTripwire * ((1 / leverage) * 0.85);
+        if (slDistanceLong > maxSafeSlLong) {
+            slDistanceLong = maxSafeSlLong;
+        }
+        const maxSafeSlShort = lowerTripwire * ((1 / leverage) * 0.85);
+        if (slDistanceShort > maxSafeSlShort) {
+            slDistanceShort = maxSafeSlShort;
+        }
+
+        // Safeguard 2: Minimum safe distance to prevent instant noise stops (at least 0.25% of price or 1.5x atrBuffer)
+        const minSafeSlLong = Math.max(upperTripwire * 0.0025, atrBuffer * 1.5);
+        if (slDistanceLong < minSafeSlLong) {
+            slDistanceLong = minSafeSlLong;
+        }
+        const minSafeSlShort = Math.max(lowerTripwire * 0.0025, atrBuffer * 1.5);
+        if (slDistanceShort < minSafeSlShort) {
+            slDistanceShort = minSafeSlShort;
+        }
+
+        const stopLossLong   = upperTripwire - slDistanceLong;
+        const stopLossShort  = lowerTripwire + slDistanceShort;
 
         // 5. Current price
         let currentPrice = closedCloses[closedCloses.length - 1];

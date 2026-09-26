@@ -622,6 +622,7 @@ export default function TradingBot() {
                     onScanNow={handleScanNow}
                     symbolsAffordable={currentModeStatus?.symbolsAffordable || []}
                     armedTripwires={armedTripwires}
+                    strategyType={currentModeStatus?.config?.strategyType}
                 />
 
                 {/* 4. Equity Performance Curve */}

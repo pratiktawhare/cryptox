@@ -206,6 +206,11 @@ class BreakoutWatcher {
                 symbol: t.symbol,
                 upperTripwire: t.upperTripwire,
                 lowerTripwire: t.lowerTripwire,
+                takeProfitLong: t.takeProfitLong,
+                stopLossLong: t.stopLossLong,
+                takeProfitShort: t.takeProfitShort,
+                stopLossShort: t.stopLossShort,
+                targetRoiPct: t.targetRoiPct,
                 squeezeBars: t.squeezeBars,
                 bandwidth: t.bandwidth,
                 armedAt: t.armedAt,
@@ -281,12 +286,15 @@ class BreakoutWatcher {
             this.armedTripwires.delete(sym);
             this.lastTradeExecutionTime = Date.now();
 
-            // 3. Select SL / TP based on direction
+            // 3. Select SL / TP based on direction (follows configured slAtrMultiplier)
             const isLong = direction === 'long';
             const takeProfit = isLong ? tripwire.takeProfitLong : tripwire.takeProfitShort;
             const stopLoss   = isLong ? tripwire.stopLossLong : tripwire.stopLossShort;
+            const slMultiplier = tripwire.config?.slAtrMultiplier || 5.0;
+            const slDistPct = triggerPrice > 0 ? (Math.abs(triggerPrice - stopLoss) / triggerPrice * 100).toFixed(2) : '0';
+            const tpDistPct = triggerPrice > 0 ? (Math.abs(takeProfit - triggerPrice) / triggerPrice * 100).toFixed(2) : '0';
 
-            console.log(`[BreakoutWatcher] 🚀 FIRING ${direction.toUpperCase()} BREAKOUT on ${sym}! Price: $${triggerPrice}, TP: $${takeProfit.toFixed(4)}, SL: $${stopLoss.toFixed(4)} (RVOL: ${rvol.toFixed(2)}x)`);
+            console.log(`[BreakoutWatcher] 🚀 FIRING ${direction.toUpperCase()} BREAKOUT on ${sym}! Price: $${triggerPrice}, TP: $${takeProfit.toFixed(4)} (+${tpDistPct}%), SL: $${stopLoss.toFixed(4)} (-${slDistPct}%, ${slMultiplier}x ATR) (RVOL: ${rvol.toFixed(2)}x)`);
 
             // 4. Execute Trade via ExecutionEngine
             const execResult = await executionEngine.executeTrade({
@@ -308,7 +316,7 @@ class BreakoutWatcher {
                 io:                     this.io,
                 wsManager:              this.wsManager,
                 orderType:              'market_order', // immediate entry on breakout breach
-                strategyType:           'breakout_straddle',
+                strategyType:           tripwire.config?.strategyType || 'breakout_straddle',
                 breakoutLevel:          isLong ? tripwire.upperTripwire : tripwire.lowerTripwire,
             });
 

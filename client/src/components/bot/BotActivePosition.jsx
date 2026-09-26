@@ -297,7 +297,12 @@ function ArmedTripwireCard({ tripwire, livePrice }) {
                     </div>
                     <div className="text-right text-[10px] text-crypto-muted">
                         <span className="text-emerald-400 font-bold">{parseFloat(distToUpperPct) > 0 ? `+${distToUpperPct}%` : 'READY'}</span> from live
-                        <div className="text-[9px] text-crypto-muted/80">TP: ${tripwire.takeProfitLong?.toFixed(4)}</div>
+                        <div className="text-[9px] text-crypto-muted/80 flex items-center justify-end gap-1.5 mt-0.5">
+                            <span className="text-emerald-400/90 font-mono">TP: ${tripwire.takeProfitLong?.toFixed(4)}</span>
+                            {tripwire.stopLossLong && (
+                                <span className="text-rose-400/80 font-mono">SL: ${tripwire.stopLossLong?.toFixed(4)}</span>
+                            )}
+                        </div>
                     </div>
                 </div>
 
@@ -314,7 +319,12 @@ function ArmedTripwireCard({ tripwire, livePrice }) {
                     </div>
                     <div className="text-right text-[10px] text-crypto-muted">
                         <span className="text-rose-400 font-bold">{parseFloat(distToLowerPct) > 0 ? `-${distToLowerPct}%` : 'READY'}</span> from live
-                        <div className="text-[9px] text-crypto-muted/80">TP: ${tripwire.takeProfitShort?.toFixed(4)}</div>
+                        <div className="text-[9px] text-crypto-muted/80 flex items-center justify-end gap-1.5 mt-0.5">
+                            <span className="text-rose-400/90 font-mono">TP: ${tripwire.takeProfitShort?.toFixed(4)}</span>
+                            {tripwire.stopLossShort && (
+                                <span className="text-emerald-400/80 font-mono">SL: ${tripwire.stopLossShort?.toFixed(4)}</span>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -341,6 +351,7 @@ export default function BotActivePosition({
     onScanNow,
     symbolsAffordable = [],
     armedTripwires = [],
+    strategyType = 'radar_fleet',
 }) {
     const navigate = useNavigate();
 
@@ -357,7 +368,7 @@ export default function BotActivePosition({
                     <div className="space-y-3">
                         <div className="flex items-center justify-between px-1">
                             <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
-                                <span>📡</span> Active Radar Fleet ({armedTripwires.length} Coiled Coins Watching)
+                                <span>📡</span> {strategyType === 'breakout_straddle' ? 'Active Breakout Straddle' : 'Active Radar Fleet'} ({armedTripwires.length} Coiled {armedTripwires.length === 1 ? 'Coin' : 'Coins'} Watching)
                             </span>
                             <span className="text-[10px] text-crypto-muted font-medium">Sub-Second WebSocket Breaches</span>
                         </div>

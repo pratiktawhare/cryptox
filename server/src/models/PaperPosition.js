@@ -40,7 +40,7 @@ const paperPositionSchema = new mongoose.Schema({
     tradeHistoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'TradeHistory', default: null },
     source:     { type: String, enum: ['manual', 'signal', 'automation'], default: 'manual' },
     reverseMode: { type: Boolean, default: false },
-    strategyType: { type: String, enum: ['trend_pullback', 'breakout_straddle', 'adaptive_hybrid'], default: 'trend_pullback' },
+    strategyType: { type: String, enum: ['trend_pullback', 'breakout_straddle', 'radar_fleet', 'adaptive_hybrid'], default: 'trend_pullback' },
 
 }, { timestamps: true });
 
