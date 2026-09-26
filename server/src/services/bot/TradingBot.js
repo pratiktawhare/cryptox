@@ -37,6 +37,8 @@ const positionMonitor = require('./PositionMonitor');
 const entryOrderWatcher = require('./EntryOrderWatcher');
 const aiRegimeAnalyzer = require('./AiRegimeAnalyzer');
 const productCatalog = require('../ProductCatalog');
+const breakoutScanner = require('./BreakoutScanner');
+const breakoutWatcher = require('./BreakoutWatcher');
 
 class TradingBot {
     /**
@@ -95,6 +97,9 @@ class TradingBot {
         // Start AI regime analyzer
         aiRegimeAnalyzer.start(this.wsManager);
 
+        // Start breakout watcher (monitors live price breaches on armed tripwires)
+        breakoutWatcher.start(this.io, this.wsManager);
+
         console.log(`[TradingBot] 🤖 ${this.mode.toUpperCase()} Bot started`);
         this._emitStatus();
 
@@ -123,6 +128,7 @@ class TradingBot {
         }
         this._nextScanAt = null;
         aiRegimeAnalyzer.stop();
+        breakoutWatcher.stop();
         console.log(`[TradingBot] ⏹️ ${this.mode.toUpperCase()} Bot stopped`);
         this._emitStatus();
     }
@@ -161,6 +167,7 @@ class TradingBot {
             });
         }
 
+        breakoutWatcher.disarmAll('emergency_stop');
         this.stop();
         this._emitStatus();
         return closeResult;
@@ -177,6 +184,7 @@ class TradingBot {
             isScanning: this.isScanning,
             nextScanAt: this._nextScanAt,
             lastScan: this.lastScanResult,
+            armedTripwires: breakoutWatcher.getArmedTripwires(),
         };
     }
 
@@ -509,6 +517,14 @@ class TradingBot {
 
         console.log(`[TradingBot] Budget $${effectiveBudget.toFixed(2)}: Filtered ${allSymbols.length} coins down to ${unheldAffordable.length} available candidates (excluding ${openSymbols.size} open): ${unheldAffordable.slice(0, 5).join(', ')}...`);
 
+        // ── Strategy Mode Branching ──────────────────────────────────────────
+        const strategyType = config.strategyType || 'trend_pullback';
+
+        if (strategyType === 'breakout_straddle') {
+            await this._scanBreakoutStraddle(config, userId, availableBalance, effectiveBudget, allSymbols, affordableSymbols, unheldAffordable, maxAllowed, openTrades);
+            return;
+        }
+
         // ── 4. Technical Analysis & Candidate Scoring ──────────────────────────
         const groqResult = (config.aiEnabled !== false) ? aiRegimeAnalyzer.getLastAnalysis() : null;
         const candidates = [];
@@ -633,6 +649,13 @@ class TradingBot {
                         totalScanned: allSymbols.length,
                     });
                 }
+            }
+
+            // If in Adaptive Hybrid mode, fall back to checking for Squeeze Breakouts
+            if (strategyType === 'adaptive_hybrid') {
+                console.log(`[TradingBot] 🔀 [Adaptive Hybrid] No trend pullback qualified (Best: ${best.symbol} ${best.scoreResult.score}/${config.minSignalScore}). Checking for Breakout Squeeze setups...`);
+                await this._scanBreakoutStraddle(config, userId, availableBalance, effectiveBudget, allSymbols, affordableSymbols, unheldAffordable, maxAllowed, openTrades);
+                return;
             }
 
             await this._logEvent(userId, 'NO_SIGNAL_FOUND', 'info',
@@ -786,6 +809,116 @@ class TradingBot {
                 `TradingBot executed ${best.scoreResult.direction.toUpperCase()} ${best.symbol} with score ${best.scoreResult.score}/8`
             );
         }
+    }
+
+    /**
+     * Executes the Breakout Straddle scan pipeline:
+     * 1. Evaluates affordable coins for TTM Squeeze compression (BB inside KC).
+     * 2. Calculates Upper Resistance & Lower Support Tripwires with ATR buffers.
+     * 3. Arms BreakoutWatcher to monitor live WebSocket ticks for instant breach execution.
+     */
+    async _scanBreakoutStraddle(config, userId, availableBalance, effectiveBudget, allSymbols, affordableSymbols, unheldAffordable, maxAllowed, openTrades) {
+        const coinsToScan = unheldAffordable.slice(0, 25);
+        console.log(`[TradingBot] ⚡ Scanning ${coinsToScan.length} coins for Breakout Straddle (TTM Squeeze)...`);
+
+        const setups = await breakoutScanner.scanAll(coinsToScan, config, this.wsManager);
+
+        if (!setups || setups.length === 0) {
+            console.log(`[TradingBot] [Breakout] No coins in volatility squeeze among ${coinsToScan.length} scanned.`);
+            this.lastScanResult = {
+                timestamp: new Date(),
+                totalScanned: allSymbols.length,
+                affordableCount: affordableSymbols.length,
+                bestSymbol: null,
+                bestScore: null,
+                decision: 'NO_SQUEEZE',
+                reason: `Scanned ${coinsToScan.length} coins. None met ${config.breakoutSqueezeBars || 3}+ bar TTM squeeze criteria.`,
+            };
+            await this._recordSignal({
+                userId,
+                symbol: 'SQUEEZE_SCAN',
+                direction: null,
+                score: 0,
+                decision: 'NO_SQUEEZE',
+                rejectReason: `No coins met ${config.breakoutSqueezeBars || 3}+ consecutive 5m squeeze bars`,
+                walletBalance: availableBalance,
+                effectiveBudget,
+                affordableSymbols: affordableSymbols.length,
+                totalScanned: allSymbols.length,
+            });
+            await this._logEvent(userId, 'NO_SIGNAL_FOUND', 'info',
+                `Breakout scan completed. No coins in squeeze among ${coinsToScan.length} candidates.`
+            );
+            return;
+        }
+
+        // Sort setups: longest squeeze (most compressed) first, then narrowest bandwidth
+        setups.sort((a, b) => {
+            if (b.squeezeBars !== a.squeezeBars) return b.squeezeBars - a.squeezeBars;
+            return (a.bandwidth || 0) - (b.bandwidth || 0);
+        });
+
+        // Arm top setup(s) up to available slots
+        const availableSlots = Math.max(1, maxAllowed - openTrades.length);
+        const toArm = setups.slice(0, Math.min(availableSlots, 2));
+
+        for (const setup of toArm) {
+            const spec = this.productCatalog?.getBySymbol(setup.symbol) || productCatalog.getBySymbol(setup.symbol);
+            const contractValue = parseFloat(spec?.contract_value || 1);
+            const minQty = parseFloat(spec?.min_quantity || 1);
+            const leverage = Math.min(config.maxLeverage || 20, parseFloat(spec?.max_leverage || 100));
+            const budgetUSDT = config.budgetUSDT > 0 ? config.budgetUSDT : 10;
+            const walletParts = Math.max(1, config.walletParts || 1);
+            const targetPartMargin = budgetUSDT / walletParts;
+            const targetMargin = Math.min(targetPartMargin, availableBalance);
+            const targetNotional = targetMargin * leverage;
+            const rawQty = Math.round(targetNotional / (contractValue * setup.currentPrice));
+            const maxQtyFromBalance = Math.floor((availableBalance * leverage) / (contractValue * setup.currentPrice));
+            const qty = Math.min(Math.max(minQty, rawQty), maxQtyFromBalance);
+            const margin = (qty * contractValue * setup.currentPrice) / leverage;
+
+            const context = {
+                userId,
+                mode: this.mode,
+                config,
+                effectiveBudget,
+                margin,
+                quantity: qty,
+                walletBalanceAtEntry: availableBalance,
+                effectiveBudgetAtEntry: effectiveBudget,
+            };
+
+            breakoutWatcher.armTripwire(setup, context);
+
+            await this._logEvent(userId, 'SQUEEZE_DETECTED', 'info',
+                `⚡ [SQUEEZE] ${setup.symbol} compressed for ${setup.squeezeBars} bars (Bandwidth: ${setup.bandwidth?.toFixed(4)}). Range: $${setup.rangeLow.toFixed(4)} - $${setup.rangeHigh.toFixed(4)}`,
+                { symbol: setup.symbol, squeezeBars: setup.squeezeBars, bandwidth: setup.bandwidth, rangeHigh: setup.rangeHigh, rangeLow: setup.rangeLow }
+            );
+        }
+
+        const top = toArm[0];
+        this.lastScanResult = {
+            timestamp: new Date(),
+            totalScanned: allSymbols.length,
+            affordableCount: affordableSymbols.length,
+            bestSymbol: top.symbol,
+            bestScore: 8,
+            decision: 'TRIPWIRE_ARMED',
+            reason: `Armed dual tripwires for ${top.symbol} (Squeeze: ${top.squeezeBars} bars). Long @ $${top.upperTripwire.toFixed(4)}, Short @ $${top.lowerTripwire.toFixed(4)}`,
+        };
+
+        await this._recordSignal({
+            userId,
+            symbol: top.symbol,
+            direction: 'both',
+            score: 8,
+            decision: 'TRIPWIRE_ARMED',
+            rejectReason: null,
+            walletBalance: availableBalance,
+            effectiveBudget,
+            affordableSymbols: affordableSymbols.length,
+            totalScanned: allSymbols.length,
+        });
     }
 
     // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -983,9 +1116,10 @@ class TradingBot {
                             trade.breakevenTriggeredCount = (trade.breakevenTriggeredCount || 0) + 1;
                             await trade.save();
 
-                            if (trade.breakevenTriggeredCount >= 2) {
-                                // Confirmed over 2 consecutive cycles — execute breakeven SL move
-                                console.log(`[TradingBot] 🔒 Breakeven confirmed (2/2) for ${trade.direction.toUpperCase()} ${symbol} (Current: $${currentPrice}, Trigger: $${beTriggerPrice.toFixed(4)}). Moving SL to Entry: $${trade.entryPrice}`);
+                            const neededConfirmations = trade.strategyType === 'breakout_straddle' ? 1 : 2;
+                            if (trade.breakevenTriggeredCount >= neededConfirmations) {
+                                // Confirmed over N consecutive cycles — execute breakeven SL move
+                                console.log(`[TradingBot] 🔒 Breakeven confirmed (${trade.breakevenTriggeredCount}/${neededConfirmations}) for ${trade.direction.toUpperCase()} ${symbol} (Current: $${currentPrice}, Trigger: $${beTriggerPrice.toFixed(4)}). Moving SL to Entry: $${trade.entryPrice}`);
                                 try {
                                     await positionMonitor.modifyStopLoss(trade, trade.entryPrice);
                                 } catch (beErr) {
@@ -993,12 +1127,12 @@ class TradingBot {
                                 }
                             } else {
                                 // First confirmation cycle
-                                console.log(`[TradingBot] ⏳ Breakeven trigger pending (1/2 confirmations) for ${symbol} @ $${currentPrice} (Trigger: $${beTriggerPrice.toFixed(4)})`);
+                                console.log(`[TradingBot] ⏳ Breakeven trigger pending (1/${neededConfirmations} confirmations) for ${symbol} @ $${currentPrice} (Trigger: $${beTriggerPrice.toFixed(4)})`);
                                 await this._logEvent(
                                     userId,
                                     'POSITION_BREAKEVEN_PENDING',
                                     'info',
-                                    `⏳ [BREAKEVEN PENDING] ${symbol} (${trade.direction.toUpperCase()}): Reached 50% TP target ($${currentPrice} ${isLong ? '>=' : '<='} $${beTriggerPrice.toFixed(4)}). Awaiting 2nd scan confirmation to move SL to Entry.`,
+                                    `⏳ [BREAKEVEN PENDING] ${symbol} (${trade.direction.toUpperCase()}): Reached 50% TP target ($${currentPrice} ${isLong ? '>=' : '<='} $${beTriggerPrice.toFixed(4)}). Awaiting confirmation to move SL to Entry.`,
                                     { tradeId: trade._id, symbol, currentPrice, beTriggerPrice, confirmations: 1 }
                                 );
                             }

@@ -123,6 +123,49 @@ const tradingConfigSchema = new mongoose.Schema(
             default: 5,
         },
 
+        // ── Strategy Selection ──────────────────────────────────────────────
+        // 'trend_pullback'    = Buys pullbacks at EMA9 support during active trends (default)
+        // 'breakout_straddle' = Arms dual tripwires around tight ranges, trades volatility expansion
+        // 'adaptive_hybrid'   = Auto-selects based on market regime (pullback on trends, breakout on squeeze)
+        strategyType: {
+            type: String,
+            enum: ['trend_pullback', 'breakout_straddle', 'adaptive_hybrid'],
+            default: 'trend_pullback',
+        },
+
+        // ── Breakout Straddle Parameters ────────────────────────────────────
+        // Minimum consecutive 5m candles in a squeeze before arming tripwires
+        breakoutSqueezeBars: {
+            type: Number,
+            default: 3,
+            min: 1,
+            max: 20,
+        },
+
+        // Minimum relative volume surge required on breakout candle
+        breakoutRvolMin: {
+            type: Number,
+            default: 1.8,
+            min: 1.0,
+            max: 5.0,
+        },
+
+        // Target ROI % on margin for fast breakout scalps (e.g. 10 = 10% ROI at 20x)
+        breakoutTargetRoiPct: {
+            type: Number,
+            default: 10,
+            min: 2,
+            max: 50,
+        },
+
+        // ATR buffer multiplier applied beyond Range High/Low to prevent false wick breaches
+        breakoutAtrBufferMultiplier: {
+            type: Number,
+            default: 0.15,
+            min: 0.05,
+            max: 0.5,
+        },
+
         // ── Scan Settings ───────────────────────────────────────────────────
         // How often to scan all symbols for setups (minutes)
         scanIntervalMinutes: {

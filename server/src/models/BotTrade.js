@@ -107,6 +107,10 @@ const botTradeSchema = new mongoose.Schema(
 
         // ── Strategy Direction Mode ─────────────────────────────────────────
         reverseMode: { type: Boolean, default: false },
+
+        // ── Strategy Pipeline ───────────────────────────────────────────────
+        strategyType: { type: String, default: 'trend_pullback' },
+        breakoutLevel: { type: Number, default: null },
     },
     {
         timestamps: true,

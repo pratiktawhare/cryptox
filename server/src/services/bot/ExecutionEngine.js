@@ -105,6 +105,8 @@ class ExecutionEngine {
             wsManager = null,
             orderType = 'market_order',
             reverseMode = false,
+            strategyType = 'trend_pullback',
+            breakoutLevel = null,
         } = params;
 
         // 1. Guard against concurrent entry
@@ -171,6 +173,8 @@ class ExecutionEngine {
                     wsManager,
                     orderType,
                     reverseMode,
+                    strategyType,
+                    breakoutLevel,
                 });
             } else if (mode === 'live') {
                 return await this._executeLive({
@@ -193,6 +197,8 @@ class ExecutionEngine {
                     io,
                     orderType,
                     reverseMode,
+                    strategyType,
+                    breakoutLevel,
                 });
             } else {
                 throw new Error(`Invalid trading mode: ${mode}`);
@@ -287,6 +293,8 @@ class ExecutionEngine {
                 walletBalanceAtEntry: walletBalanceAtEntry || wallet.balance,
                 effectiveBudgetAtEntry: effectiveBudgetAtEntry || Math.min(wallet.balance, 10),
                 reverseMode: Boolean(params.reverseMode),
+                strategyType: params.strategyType || 'trend_pullback',
+                breakoutLevel: params.breakoutLevel || null,
             });
 
             await this._logEvent(userId, 'paper', 'ORDER_SUBMITTED', 'info',
@@ -376,6 +384,7 @@ class ExecutionEngine {
             liquidationPrice: liqPrice,
             source: 'automation',
             reverseMode: Boolean(params.reverseMode),
+            strategyType: params.strategyType || 'trend_pullback',
             status: 'open',
         });
 
@@ -403,6 +412,8 @@ class ExecutionEngine {
             walletBalanceAtEntry: walletBalanceAtEntry || wallet.balance,
             effectiveBudgetAtEntry: effectiveBudgetAtEntry || Math.min(wallet.balance, 10),
             reverseMode: Boolean(params.reverseMode),
+            strategyType: params.strategyType || 'trend_pullback',
+            breakoutLevel: params.breakoutLevel || null,
         });
 
         // Link position to trade if desired
@@ -561,6 +572,8 @@ class ExecutionEngine {
             walletBalanceAtEntry,
             effectiveBudgetAtEntry,
             reverseMode: Boolean(params.reverseMode),
+            strategyType: params.strategyType || 'trend_pullback',
+            breakoutLevel: params.breakoutLevel || null,
         });
 
         await this._logEvent(userId, 'live', 'ORDER_PENDING', 'info',
@@ -619,6 +632,8 @@ class ExecutionEngine {
                 entryOrderId: orderId, entryOrderStatus: 'filled',
                 signalScore, regime, walletBalanceAtEntry, effectiveBudgetAtEntry,
                 reverseMode: Boolean(reverseMode),
+                strategyType: params.strategyType || 'trend_pullback',
+                breakoutLevel: params.breakoutLevel || null,
             });
         }
 
@@ -675,6 +690,7 @@ class ExecutionEngine {
             liquidationPrice: liqPrice,
             source: 'automation',
             reverseMode: Boolean(trade.reverseMode),
+            strategyType: trade.strategyType || 'trend_pullback',
             status: 'open',
             tradeHistoryId: trade._id,
         });

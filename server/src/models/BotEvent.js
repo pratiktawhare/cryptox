@@ -49,6 +49,12 @@ const BOT_EVENT_TYPES = [
     'BREAKEVEN_SL_MOVED',
     'POSITION_BREAKEVEN_PENDING',
 
+    // Breakout Straddle Strategy
+    'SQUEEZE_DETECTED',
+    'TRIPWIRE_ARMED',
+    'BREAKOUT_TRIGGERED',
+    'TRIPWIRE_EXPIRED',
+
     // Risk limits
     'DAILY_LIMIT_REACHED',
     'CONSECUTIVE_LOSS_LIMIT',

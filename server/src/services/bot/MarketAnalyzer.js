@@ -14,6 +14,8 @@ const { calcRSI }        = require('./indicators/rsi');
 const { calcATR, calcATRPercent } = require('./indicators/atr');
 const { calcVolumeRatio } = require('./indicators/volume');
 const { calcMomentum }   = require('./indicators/momentum');
+const { calcBollingerBands } = require('./indicators/bollinger');
+const { calcKeltnerChannels } = require('./indicators/keltner');
 
 /**
  * Analyze a single symbol and return a full market snapshot.
@@ -70,6 +72,14 @@ function analyzeSymbol(symbol, wsManager) {
     const stretchRatio_5m = (atr_5m !== null && atr_5m > 0 && ema21_5m !== null)
         ? Math.abs(currentClose - ema21_5m) / atr_5m
         : null;
+
+    // Bollinger Bands & Keltner Channels (TTM Squeeze Detection)
+    const bb5m = calcBollingerBands(closedCloses5m, 20, 2.0);
+    const kc5m = calcKeltnerChannels(closedHighs5m, closedLows5m, closedCloses5m, 20, 14, 1.5);
+    const inSqueeze5m = (bb5m && kc5m)
+        ? (bb5m.upper <= kc5m.upper && bb5m.lower >= kc5m.lower)
+        : false;
+    const squeezeBandwidth5m = bb5m?.bandwidth ?? null;
 
     // ── 1m Indicators ───────────────────────────────────────────────────────
     const closes1mFull  = candles1m.map(c => c.close);
@@ -129,6 +139,10 @@ function analyzeSymbol(symbol, wsManager) {
             atrPct:      atrPct_5m,      // ATR as % of price — for regime detection
             stretchRatio: stretchRatio_5m, // |close - EMA21| / ATR — overextension gauge
             volumeRatio: volumeRatio,
+            bollinger:   bb5m,
+            keltner:     kc5m,
+            inSqueeze:   inSqueeze5m,
+            squeezeBandwidth: squeezeBandwidth5m,
             close:       currentClose,
             closedClose: closedCloses5m[closedCloses5m.length - 1],
         },

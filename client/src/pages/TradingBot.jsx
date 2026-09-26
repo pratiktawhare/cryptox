@@ -31,6 +31,7 @@ export default function TradingBot() {
     const [events, setEvents] = useState([]);
     const [performance, setPerformance] = useState(null);
     const [livePrices, setLivePrices] = useState({});
+    const [armedTripwires, setArmedTripwires] = useState([]);
 
     // UI state
     const [loading, setLoading] = useState(true);
@@ -79,6 +80,9 @@ export default function TradingBot() {
                     normalized.live.running = r;
                 }
                 setStatusData(normalized);
+                if (normalized[mode]?.armedTripwires) {
+                    setArmedTripwires(normalized[mode].armedTripwires);
+                }
             }
             if (walletRes.data) setWalletData(walletRes.data);
 
@@ -267,10 +271,31 @@ export default function TradingBot() {
         socket.on('bot_status', handleBotStatus);
         socket.on('ticker', handleTicker);
         socket.on('wallet_update', handleWalletUpdate);
+        const handleTripwireArmed = (payload) => {
+            if (payload?.mode === mode) {
+                setArmedTripwires(prev => [payload, ...prev.filter(t => t.symbol !== payload.symbol)]);
+            }
+        };
+
+        const handleTripwireDisarmed = (payload) => {
+            setArmedTripwires(prev => prev.filter(t => t.symbol !== payload?.symbol));
+        };
+
+        const handleTripwireTriggered = (payload) => {
+            setArmedTripwires(prev => prev.filter(t => t.symbol !== payload?.symbol));
+            fetchBotData();
+        };
+
+        socket.on('bot_tripwire_armed', handleTripwireArmed);
+        socket.on('bot_tripwire_disarmed', handleTripwireDisarmed);
+        socket.on('bot_tripwire_triggered', handleTripwireTriggered);
         socket.on('paper_order_placed', handlePaperWalletUpdate);
         socket.on('paper_position_closed', handlePaperWalletUpdate);
 
         return () => {
+            socket.off('bot_tripwire_armed', handleTripwireArmed);
+            socket.off('bot_tripwire_disarmed', handleTripwireDisarmed);
+            socket.off('bot_tripwire_triggered', handleTripwireTriggered);
             socket.off('bot_trade_pending', handleTradePending);
             socket.off('bot_trade_opened', handleTradeOpened);
             socket.off('bot_trade_closed', handleTradeClosed);
@@ -596,6 +621,7 @@ export default function TradingBot() {
                     onCloseTrade={handleCloseTrade}
                     onScanNow={handleScanNow}
                     symbolsAffordable={currentModeStatus?.symbolsAffordable || []}
+                    armedTripwires={armedTripwires}
                 />
 
                 {/* 4. Equity Performance Curve */}

@@ -242,6 +242,91 @@ function SinglePositionCard({ trade, currentPrice, onCloseTrade, navigate }) {
     );
 }
 
+function ArmedTripwireCard({ tripwire, livePrice }) {
+    const sym = tripwire.symbol || '';
+    const price = livePrice || tripwire.currentPrice;
+    const upper = tripwire.upperTripwire;
+    const lower = tripwire.lowerTripwire;
+    const rangeH = tripwire.rangeHigh;
+    const rangeL = tripwire.rangeLow;
+    const distToUpperPct = (price && upper > 0) ? ((upper - price) / price * 100).toFixed(2) : '0';
+    const distToLowerPct = (price && lower > 0) ? ((price - lower) / price * 100).toFixed(2) : '0';
+
+    return (
+        <div className="bg-gradient-to-br from-amber-500/10 via-crypto-card to-crypto-card border border-amber-500/30 rounded-2xl p-5 md:p-6 shadow-xl relative overflow-hidden">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-amber-500/20">
+                <div className="flex items-center gap-3">
+                    <span className="w-3 h-3 rounded-full bg-amber-400 animate-ping" />
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <h3 className="text-base font-black text-crypto-heading tracking-tight">
+                                {sym.replace('USD', '/USD')}
+                            </h3>
+                            <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 text-[10px] font-black uppercase tracking-wider">
+                                ⚡ TTM Squeeze Coiled ({tripwire.squeezeBars || 3} Bars)
+                            </span>
+                        </div>
+                        <p className="text-[11px] text-crypto-muted">
+                            Consolidation: ${rangeL?.toFixed(4)} – ${rangeH?.toFixed(4)} · Dual Tripwires Armed
+                        </p>
+                    </div>
+                </div>
+
+                <div className="text-right flex items-center gap-2">
+                    <span className="px-2.5 py-1 rounded-xl bg-crypto-bg border border-crypto-border text-[11px] font-bold text-crypto-heading">
+                        Mark: <span className="text-crypto-primary font-mono">${price?.toFixed(4)}</span>
+                    </span>
+                    <span className="px-2 py-1 rounded-xl bg-amber-500/15 border border-amber-500/30 text-[10px] font-bold text-amber-400">
+                        Target: +{tripwire.targetRoiPct}% ROI
+                    </span>
+                </div>
+            </div>
+
+            {/* Tripwire triggers visual grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                {/* Upper Tripwire (Long) */}
+                <div className="p-3 bg-crypto-bg/80 border border-emerald-500/30 rounded-xl flex items-center justify-between">
+                    <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                            Long Breakout Trigger (Upper)
+                        </div>
+                        <div className="text-sm font-black text-crypto-heading font-mono mt-0.5">
+                            ${upper?.toFixed(4)}
+                        </div>
+                    </div>
+                    <div className="text-right text-[10px] text-crypto-muted">
+                        <span className="text-emerald-400 font-bold">{parseFloat(distToUpperPct) > 0 ? `+${distToUpperPct}%` : 'READY'}</span> from live
+                        <div className="text-[9px] text-crypto-muted/80">TP: ${tripwire.takeProfitLong?.toFixed(4)}</div>
+                    </div>
+                </div>
+
+                {/* Lower Tripwire (Short) */}
+                <div className="p-3 bg-crypto-bg/80 border border-rose-500/30 rounded-xl flex items-center justify-between">
+                    <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-rose-400 flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+                            Short Breakdown Trigger (Lower)
+                        </div>
+                        <div className="text-sm font-black text-crypto-heading font-mono mt-0.5">
+                            ${lower?.toFixed(4)}
+                        </div>
+                    </div>
+                    <div className="text-right text-[10px] text-crypto-muted">
+                        <span className="text-rose-400 font-bold">{parseFloat(distToLowerPct) > 0 ? `-${distToLowerPct}%` : 'READY'}</span> from live
+                        <div className="text-[9px] text-crypto-muted/80">TP: ${tripwire.takeProfitShort?.toFixed(4)}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="mt-2.5 flex items-center justify-between text-[10px] text-crypto-muted">
+                <span>🎯 OCO Active: First breach cancels opposite side immediately</span>
+                <span className="text-amber-400 font-semibold">⚡ RVOL ≥ 1.8x Surge Filter Enabled</span>
+            </div>
+        </div>
+    );
+}
+
 export default function BotActivePosition({
     trades = [],
     trade = null,
@@ -255,6 +340,7 @@ export default function BotActivePosition({
     onCloseTrade,
     onScanNow,
     symbolsAffordable = [],
+    armedTripwires = [],
 }) {
     const navigate = useNavigate();
 
@@ -265,8 +351,22 @@ export default function BotActivePosition({
     if (activeTrades.length === 0) {
         // Standby / Scanning State
         return (
-            <div className="bg-crypto-card/60 backdrop-blur-md border border-crypto-border/80 rounded-2xl p-6 md:p-8 text-center relative overflow-hidden">
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(99,91,255,0.06)_0%,transparent_70%)] pointer-events-none" />
+            <div className="space-y-4">
+                {/* Armed Tripwires Radar */}
+                {armedTripwires && armedTripwires.length > 0 && (
+                    <div className="space-y-3">
+                        {armedTripwires.map(tw => (
+                            <ArmedTripwireCard
+                                key={tw.symbol}
+                                tripwire={tw}
+                                livePrice={livePrices[tw.symbol]}
+                            />
+                        ))}
+                    </div>
+                )}
+
+                <div className="bg-crypto-card/60 backdrop-blur-md border border-crypto-border/80 rounded-2xl p-6 md:p-8 text-center relative overflow-hidden">
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(99,91,255,0.06)_0%,transparent_70%)] pointer-events-none" />
 
                 <div className="max-w-md mx-auto relative z-10 flex flex-col items-center">
                     <div className="relative w-16 h-16 flex items-center justify-center mb-4">
@@ -345,8 +445,9 @@ export default function BotActivePosition({
                     )}
                 </div>
             </div>
-        );
-    }
+        </div>
+    );
+}
 
     // Multiple or Single Active Positions View
     return (

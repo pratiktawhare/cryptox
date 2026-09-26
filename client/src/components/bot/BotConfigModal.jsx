@@ -21,6 +21,10 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
     const [aiIntervalSeconds, setAiIntervalSeconds] = useState(config.aiIntervalSeconds ?? 1800);
     const [walletParts, setWalletParts] = useState(config.walletParts ?? 1);
     const [smartGuard, setSmartGuard] = useState(config.smartLossGuard ?? false);
+    const [strategyType, setStrategyType] = useState(config.strategyType ?? 'trend_pullback');
+    const [breakoutSqueezeBars, setBreakoutSqueezeBars] = useState(config.breakoutSqueezeBars ?? 3);
+    const [breakoutRvolMin, setBreakoutRvolMin] = useState(config.breakoutRvolMin ?? 1.8);
+    const [breakoutTargetRoiPct, setBreakoutTargetRoiPct] = useState(config.breakoutTargetRoiPct ?? 10);
 
     const [saving, setSaving] = useState(false);
     const [errorMsg, setErrorMsg] = useState('');
@@ -43,6 +47,10 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
             setAiIntervalSeconds(config.aiIntervalSeconds ?? 1800);
             setWalletParts(config.walletParts ?? 1);
             setSmartGuard(config.smartLossGuard ?? false);
+            setStrategyType(config.strategyType ?? 'trend_pullback');
+            setBreakoutSqueezeBars(config.breakoutSqueezeBars ?? 3);
+            setBreakoutRvolMin(config.breakoutRvolMin ?? 1.8);
+            setBreakoutTargetRoiPct(config.breakoutTargetRoiPct ?? 10);
         }
     }, [config, mode]);
 
@@ -77,6 +85,10 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                 aiIntervalSeconds: Number(aiIntervalSeconds),
                 walletParts: Number(walletParts),
                 smartLossGuard: Boolean(smartGuard),
+                strategyType,
+                breakoutSqueezeBars: Number(breakoutSqueezeBars),
+                breakoutRvolMin: Number(breakoutRvolMin),
+                breakoutTargetRoiPct: Number(breakoutTargetRoiPct),
             });
             onClose();
         } catch (err) {
@@ -103,6 +115,10 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
         setAiIntervalSeconds(1800);
         setWalletParts(1);
         setSmartGuard(false);
+        setStrategyType('trend_pullback');
+        setBreakoutSqueezeBars(3);
+        setBreakoutRvolMin(1.8);
+        setBreakoutTargetRoiPct(10);
     };
 
     const handleResetPaperWallet = async () => {
@@ -627,12 +643,155 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                         </div>
                     </div>
 
-                    {/* Section 3: Groq AI Sentinel */}
+                    {/* Section 3: Strategy Mode Pipeline */}
+                    <div className="space-y-4 pt-4 border-t border-crypto-border/60">
+                        <div>
+                            <h3 className="text-xs font-bold uppercase tracking-wider text-crypto-primary">
+                                3. Strategy Execution Pipeline
+                            </h3>
+                            <p className="text-[11px] text-crypto-muted">
+                                Select how the bot identifies setups: Trend Pullback, Volatility Squeeze Breakout, or Adaptive Hybrid.
+                            </p>
+                        </div>
+
+                        {/* Strategy Selector Cards */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                            {[
+                                {
+                                    id: 'trend_pullback',
+                                    title: 'Trend Pullback',
+                                    badge: 'Default',
+                                    icon: '📈',
+                                    desc: 'Dynamic EMA9 limit discount entry on trending coins.',
+                                },
+                                {
+                                    id: 'breakout_straddle',
+                                    title: 'Breakout Straddle',
+                                    badge: 'TTM Squeeze',
+                                    icon: '⚡',
+                                    desc: 'Dual tripwires around range. Instant market entry on surge.',
+                                },
+                                {
+                                    id: 'adaptive_hybrid',
+                                    title: 'Adaptive Hybrid',
+                                    badge: 'Smart Dual',
+                                    icon: '🔀',
+                                    desc: 'Rides trend pullbacks; falls back to squeeze breakout if ranging.',
+                                },
+                            ].map(st => (
+                                <button
+                                    type="button"
+                                    key={st.id}
+                                    onClick={() => setStrategyType(st.id)}
+                                    className={`p-3 rounded-2xl text-left border transition-all cursor-pointer flex flex-col justify-between ${
+                                        strategyType === st.id
+                                            ? 'bg-crypto-primary/10 border-crypto-primary shadow-sm shadow-crypto-primary/20'
+                                            : 'bg-crypto-bg border-crypto-border text-crypto-muted hover:border-crypto-border/80'
+                                    }`}
+                                >
+                                    <div>
+                                        <div className="flex items-center justify-between mb-1">
+                                            <span className="text-base">{st.icon}</span>
+                                            <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${
+                                                strategyType === st.id
+                                                    ? 'bg-crypto-primary text-white'
+                                                    : 'bg-crypto-card text-crypto-muted'
+                                            }`}>
+                                                {st.badge}
+                                            </span>
+                                        </div>
+                                        <h4 className={`text-xs font-bold ${strategyType === st.id ? 'text-crypto-primary' : 'text-crypto-heading'}`}>
+                                            {st.title}
+                                        </h4>
+                                    </div>
+                                    <p className="text-[10px] text-crypto-muted mt-1 leading-snug">
+                                        {st.desc}
+                                    </p>
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Breakout Straddle Parameters Box */}
+                        {(strategyType === 'breakout_straddle' || strategyType === 'adaptive_hybrid') && (
+                            <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl space-y-3.5">
+                                <div className="flex items-center justify-between">
+                                    <label className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                                        <span>⚡</span> Breakout Straddle Advancifications
+                                    </label>
+                                    <span className="text-[10px] font-bold text-amber-400/80 bg-amber-400/10 px-2 py-0.5 rounded">
+                                        Anti-Fakeout Mode Active
+                                    </span>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                    {/* Squeeze Bars */}
+                                    <div>
+                                        <label className="text-[11px] font-semibold text-crypto-heading block mb-1">
+                                            Min Squeeze Bars (5m)
+                                        </label>
+                                        <select
+                                            value={breakoutSqueezeBars}
+                                            onChange={e => setBreakoutSqueezeBars(parseInt(e.target.value))}
+                                            className="w-full px-2.5 py-1.5 rounded-xl bg-crypto-bg border border-crypto-border text-crypto-heading text-xs font-bold"
+                                        >
+                                            <option value={2}>2 Bars (10 min)</option>
+                                            <option value={3}>3 Bars (15 min - Recommended ★)</option>
+                                            <option value={4}>4 Bars (20 min)</option>
+                                            <option value={6}>6 Bars (30 min - Ultra Coiled)</option>
+                                        </select>
+                                        <span className="text-[10px] text-crypto-muted mt-0.5 block">BB inside Keltner</span>
+                                    </div>
+
+                                    {/* RVOL Surge Threshold */}
+                                    <div>
+                                        <label className="text-[11px] font-semibold text-crypto-heading block mb-1">
+                                            Volume Surge (RVOL)
+                                        </label>
+                                        <select
+                                            value={breakoutRvolMin}
+                                            onChange={e => setBreakoutRvolMin(parseFloat(e.target.value))}
+                                            className="w-full px-2.5 py-1.5 rounded-xl bg-crypto-bg border border-crypto-border text-crypto-heading text-xs font-bold"
+                                        >
+                                            <option value={1.2}>1.2x (Aggressive)</option>
+                                            <option value={1.5}>1.5x (Moderate)</option>
+                                            <option value={1.8}>1.8x (Institutional ★)</option>
+                                            <option value={2.2}>2.2x (Ultra Strict)</option>
+                                        </select>
+                                        <span className="text-[10px] text-crypto-muted mt-0.5 block">Filters low-vol wicks</span>
+                                    </div>
+
+                                    {/* Breakout Target ROI */}
+                                    <div>
+                                        <label className="text-[11px] font-semibold text-crypto-heading block mb-1">
+                                            Breakout Target ROI
+                                        </label>
+                                        <select
+                                            value={breakoutTargetRoiPct}
+                                            onChange={e => setBreakoutTargetRoiPct(parseFloat(e.target.value))}
+                                            className="w-full px-2.5 py-1.5 rounded-xl bg-crypto-bg border border-crypto-border text-crypto-heading text-xs font-bold"
+                                        >
+                                            <option value={6}>+6% ROI (~0.30% move)</option>
+                                            <option value={8}>+8% ROI (~0.40% move)</option>
+                                            <option value={10}>+10% ROI (~0.50% move ★)</option>
+                                            <option value={15}>+15% ROI (~0.75% move)</option>
+                                        </select>
+                                        <span className="text-[10px] text-crypto-muted mt-0.5 block">Fast scalp exit</span>
+                                    </div>
+                                </div>
+
+                                <div className="text-[10px] text-crypto-muted leading-relaxed pt-1 border-t border-amber-500/20">
+                                    💡 <strong>Dual Tripwire Mechanism:</strong> Upper level set at <code className="text-crypto-heading">Range High + 0.15× ATR</code>. Lower level set at <code className="text-crypto-heading">Range Low - 0.15× ATR</code>. Whichever breaches first with volume surge executes market entry, instantly cancelling the opposite side (OCO) and securing profit with early breakeven protection.
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Section 4: Groq AI Sentinel */}
                     <div className="space-y-3 pt-4 border-t border-crypto-border/60">
                         <div className="flex items-center justify-between">
                             <div>
                                 <h3 className="text-xs font-bold uppercase tracking-wider text-crypto-primary">
-                                    3. Groq AI Macro Sentinel
+                                    4. Groq AI Macro Sentinel
                                 </h3>
                                 <p className="text-[11px] text-crypto-muted">
                                     30m background LLM analysis. Non-blocking with 100% pure TA fail-safe fallback.

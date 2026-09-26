@@ -250,6 +250,8 @@ router.put('/config/:mode', async (req, res) => {
         'maxLeverage', 'maxOpenPositions', 'scanIntervalMinutes',
         'aiEnabled', 'aiRequired', 'aiIntervalSeconds', 'enabled',
         'targetRoiPct', 'reverseMode', 'walletParts', 'smartLossGuard',
+        'strategyType', 'breakoutSqueezeBars', 'breakoutRvolMin',
+        'breakoutTargetRoiPct', 'breakoutAtrBufferMultiplier',
     ];
 
     const updates = {};
