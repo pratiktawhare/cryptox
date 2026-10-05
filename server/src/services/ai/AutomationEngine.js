@@ -262,7 +262,7 @@ class AutomationEngine {
         // Flips BUY→SELL (and vice-versa) and swaps SL↔TP at execution time.
         // The AI signal stored in DB is UNCHANGED — only execution is mirrored.
         const reverseMode = cfg.reverseMode === true;
-        const execSignal  = { ...signal }; // shallow clone — never mutate the original
+        const execSignal  = { ...signal, reverseMode }; // shallow clone — stamp reverseMode onto execution signal
 
         if (reverseMode) {
             const origAction = execSignal.action;
@@ -414,7 +414,8 @@ class AutomationEngine {
             this._io
         );
 
-        return res?.position || res?.order || res;
+        const openedPos = res?.position || res?.order || res;
+        return openedPos;
     }
 
     // ─── Live execution ──────────────────────────────────────────────────────
@@ -532,20 +533,38 @@ class AutomationEngine {
 
         if (staleLogs.length === 0) return;
 
+        // ── Primary lookup: match by positionId (the real PaperPosition._id) ────
         const positionIds = staleLogs.map(l => l.positionId);
         const closedPos   = await PaperPosition.find({
             _id: { $in: positionIds },
             status: { $ne: 'open' },
         }).lean();
 
-        if (closedPos.length === 0) return;
-
         const posMap = {};
         for (const p of closedPos) posMap[p._id.toString()] = p;
 
+        // ── Fallback: for stale logs where positionId is a PaperOrder._id ───────
+        // (logs created before the _fillPaperOrder fix), match by signalId instead.
+        const unmatchedLogs = staleLogs.filter(l => !posMap[l.positionId.toString()]);
+        if (unmatchedLogs.length > 0) {
+            const signalIds = unmatchedLogs.map(l => l.signalId).filter(Boolean);
+            if (signalIds.length > 0) {
+                const fallbackPos = await PaperPosition.find({
+                    signalId: { $in: signalIds },
+                    status: { $ne: 'open' },
+                }).lean();
+                for (const p of fallbackPos) {
+                    if (p.signalId) posMap[`sig_${p.signalId.toString()}`] = p;
+                }
+            }
+        }
+
         let syncCount = 0;
         for (const log of staleLogs) {
-            const pos = posMap[log.positionId.toString()];
+            // Primary lookup by positionId
+            let pos = posMap[log.positionId.toString()];
+            // Fallback: lookup by signalId (for pre-fix stale logs)
+            if (!pos && log.signalId) pos = posMap[`sig_${log.signalId.toString()}`];
             if (!pos) continue;
 
             const pnl    = pos.realisedPnl ?? 0;
@@ -555,8 +574,9 @@ class AutomationEngine {
                           : pos.status === 'closed_manual' ? 'timeout'
                           : 'timeout';
 
+            // Also fix the positionId if it was a stale PaperOrder._id
             await AutomationLog.updateOne({ _id: log._id }, {
-                $set: { outcome, pnl, pnlPct, exitPrice: pos.closePrice }
+                $set: { outcome, pnl, pnlPct, exitPrice: pos.closePrice, positionId: pos._id }
             });
             syncCount++;
         }

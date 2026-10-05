@@ -62,6 +62,30 @@ class PaperTradingEngine {
             console.error('[PaperEngine] Failed to restore open positions on start:', e.message);
         }
 
+        // Reconcile wallet state: recompute used/available/equity from actual open positions.
+        // This fixes stale margin figures that persist after a server restart.
+        try {
+            const PaperWallet = require('../../models/PaperWallet');
+            const wallets = await PaperWallet.find({});
+            for (const wallet of wallets) {
+                const userId = String(wallet.userId);
+                const openPositions = await PaperPosition.find({ userId, status: 'open' });
+                let totalMarginUsed  = 0;
+                let totalUnrealised  = 0;
+                for (const pos of openPositions) {
+                    totalMarginUsed  += pos.marginUsed   || 0;
+                    totalUnrealised  += pos.unrealisedPnl || 0;
+                }
+                wallet.used      = totalMarginUsed;
+                wallet.available = Math.max(0, wallet.balance - totalMarginUsed);
+                wallet.equity    = wallet.balance + totalUnrealised;
+                await wallet.save();
+            }
+            console.log(`[PaperEngine] 💼 Reconciled wallet state for ${wallets.length} wallet(s)`);
+        } catch (recErr) {
+            console.error('[PaperEngine] Failed to reconcile wallets on start:', recErr.message);
+        }
+
         this.timer = setInterval(() => this._tick(), UPDATE_INTERVAL_MS);
         console.log('[PaperEngine] 📄 Started — simulating trades every 5s');
     }
@@ -393,6 +417,22 @@ class PaperTradingEngine {
         }
         wallet.equity = wallet.balance + totalUnrealised;
         await wallet.save();
+
+        // ── Fix AutomationLog positionId ─────────────────────────────────────────
+        // When the automation engine placed this limit order, it stored the PaperOrder._id
+        // as 'positionId' in AutomationLog (since no PaperPosition existed yet).
+        // Now that the order has filled and a real PaperPosition exists, update the log
+        // so _syncAutomationLogOutcomes can correctly resolve the closed outcome later.
+        try {
+            const AutomationLog = require('../../models/AutomationLog');
+            await AutomationLog.updateMany(
+                { positionId: order._id, outcome: { $in: ['open', 'pending'] } },
+                { $set: { positionId: position._id } }
+            );
+        } catch (logErr) {
+            // Non-critical — just means the cycle log outcome may stay 'open' longer
+            console.warn('[PaperEngine] Could not update AutomationLog positionId after order fill:', logErr.message);
+        }
 
         const _io = io || this.io;
         _io?.emit('paper_position_updated', position.toObject());
