@@ -18,12 +18,13 @@ const config = require('../../config/env');
 
 const BASE_URL = config.deltaBaseUrl; // 'https://api.india.delta.exchange'
 
-// ─── Bracket order slippage buffer ─────────────────────────────────────────────
-// When trigger price == limit price on a stop-limit bracket order, the limit order
-// may not fill if the market moves quickly past the trigger before the order lands.
-// Adding this small offset between trigger and limit guarantees the limit is always
-// on the "fillable" side of the trigger price.
-const BRACKET_SLIPPAGE_PCT = 0.0005; // 0.05% — small enough to be negligible, big enough to guarantee fill
+// ─── Bracket order market-equivalent buffer ─────────────────────────────────────
+// Delta Exchange's /v2/orders endpoint REQUIRES a limit price for bracket legs
+// (unlike /v2/orders/bracket which supports order_type: 'market_order').
+// To achieve market-order behavior, we set the limit price 2% past the trigger.
+// In practice, crypto never gaps >2% in a single exchange tick, so the bracket
+// leg fills at whatever the market offers — exactly like a market order would.
+const BRACKET_MARKET_BUFFER = 0.02; // 2% past trigger — guaranteed fill at market price
 
 class DeltaOrderClient {
     constructor(apiKey, apiSecret) {
@@ -152,30 +153,32 @@ class DeltaOrderClient {
             body.limit_price = price.toString();
         }
 
-        // Bracket orders — stop loss
-        // bracket_stop_loss_price       = Trigger price (activates the bracket leg)
-        // bracket_stop_loss_limit_price = Limit price (where the order rests in the book)
+        // Bracket orders — stop loss (market-equivalent)
+        // Delta's /v2/orders bracket requires a limit price, so we set it 2% past
+        // the trigger. This guarantees fill at whatever market price exists when
+        // the trigger fires — functionally identical to a market order.
         //
-        // We offset the limit slightly from the trigger so the market doesn't skip past
-        // the limit before it fills:
-        //   BUY entry (long)  → SL is a SELL → limit slightly BELOW trigger (1 - 0.05%)
-        //   SELL entry (short) → SL is a BUY  → limit slightly ABOVE trigger (1 + 0.05%)
+        //   BUY entry (long)  → SL closes with a SELL → limit 2% BELOW trigger
+        //   SELL entry (short) → SL closes with a BUY  → limit 2% ABOVE trigger
         if (stopLoss || stopLossTrigger) {
-            const slTrigger   = parseFloat(stopLossTrigger || stopLoss);
-            const slipFactor  = side === 'buy' ? (1 - BRACKET_SLIPPAGE_PCT) : (1 + BRACKET_SLIPPAGE_PCT);
-            const slLimit     = parseFloat((slTrigger * slipFactor).toPrecision(8));
+            const slTrigger  = parseFloat(stopLossTrigger || stopLoss);
+            const slLimit    = side === 'buy'
+                ? parseFloat((slTrigger * (1 - BRACKET_MARKET_BUFFER)).toPrecision(8))  // sell: lower limit
+                : parseFloat((slTrigger * (1 + BRACKET_MARKET_BUFFER)).toPrecision(8)); // buy:  higher limit
             body.bracket_stop_loss_price       = slTrigger.toString();
             body.bracket_stop_loss_limit_price = slLimit.toString();
         }
 
-        // Bracket orders — take profit
-        // Same offset logic as SL:
-        //   BUY entry (long)  → TP is a SELL → limit slightly BELOW trigger (1 - 0.05%)
-        //   SELL entry (short) → TP is a BUY  → limit slightly ABOVE trigger (1 + 0.05%)
+        // Bracket orders — take profit (market-equivalent)
+        // Same 2% buffer: when TP triggers, limit order is deep enough to fill at market.
+        //
+        //   BUY entry (long)  → TP closes with a SELL → limit 2% BELOW trigger
+        //   SELL entry (short) → TP closes with a BUY  → limit 2% ABOVE trigger
         if (takeProfit || takeProfitTrigger) {
-            const tpTrigger   = parseFloat(takeProfitTrigger || takeProfit);
-            const slipFactor  = side === 'buy' ? (1 - BRACKET_SLIPPAGE_PCT) : (1 + BRACKET_SLIPPAGE_PCT);
-            const tpLimit     = parseFloat((tpTrigger * slipFactor).toPrecision(8));
+            const tpTrigger  = parseFloat(takeProfitTrigger || takeProfit);
+            const tpLimit    = side === 'buy'
+                ? parseFloat((tpTrigger * (1 - BRACKET_MARKET_BUFFER)).toPrecision(8))  // sell: lower limit
+                : parseFloat((tpTrigger * (1 + BRACKET_MARKET_BUFFER)).toPrecision(8)); // buy:  higher limit
             body.bracket_take_profit_price       = tpTrigger.toString();
             body.bracket_take_profit_limit_price = tpLimit.toString();
         }
