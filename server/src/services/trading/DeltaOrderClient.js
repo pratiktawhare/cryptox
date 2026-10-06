@@ -18,6 +18,13 @@ const config = require('../../config/env');
 
 const BASE_URL = config.deltaBaseUrl; // 'https://api.india.delta.exchange'
 
+// ─── Bracket order slippage buffer ─────────────────────────────────────────────
+// When trigger price == limit price on a stop-limit bracket order, the limit order
+// may not fill if the market moves quickly past the trigger before the order lands.
+// Adding this small offset between trigger and limit guarantees the limit is always
+// on the "fillable" side of the trigger price.
+const BRACKET_SLIPPAGE_PCT = 0.0005; // 0.05% — small enough to be negligible, big enough to guarantee fill
+
 class DeltaOrderClient {
     constructor(apiKey, apiSecret) {
         this.apiKey    = apiKey;
@@ -146,19 +153,31 @@ class DeltaOrderClient {
         }
 
         // Bracket orders — stop loss
-        // bracket_stop_loss_price = Early Trigger price (activates order)
-        // bracket_stop_loss_limit_price = Limit floor price (guarantees marketable fill)
+        // bracket_stop_loss_price       = Trigger price (activates the bracket leg)
+        // bracket_stop_loss_limit_price = Limit price (where the order rests in the book)
+        //
+        // We offset the limit slightly from the trigger so the market doesn't skip past
+        // the limit before it fills:
+        //   BUY entry (long)  → SL is a SELL → limit slightly BELOW trigger (1 - 0.05%)
+        //   SELL entry (short) → SL is a BUY  → limit slightly ABOVE trigger (1 + 0.05%)
         if (stopLoss || stopLossTrigger) {
-            body.bracket_stop_loss_price       = (stopLossTrigger || stopLoss).toString();
-            body.bracket_stop_loss_limit_price = (stopLoss || stopLossTrigger).toString();
+            const slTrigger   = parseFloat(stopLossTrigger || stopLoss);
+            const slipFactor  = side === 'buy' ? (1 - BRACKET_SLIPPAGE_PCT) : (1 + BRACKET_SLIPPAGE_PCT);
+            const slLimit     = parseFloat((slTrigger * slipFactor).toPrecision(8));
+            body.bracket_stop_loss_price       = slTrigger.toString();
+            body.bracket_stop_loss_limit_price = slLimit.toString();
         }
 
         // Bracket orders — take profit
-        // bracket_take_profit_price = Early Trigger price (places order in book early)
-        // bracket_take_profit_limit_price = Target Limit price (where maker order rests for fill)
+        // Same offset logic as SL:
+        //   BUY entry (long)  → TP is a SELL → limit slightly BELOW trigger (1 - 0.05%)
+        //   SELL entry (short) → TP is a BUY  → limit slightly ABOVE trigger (1 + 0.05%)
         if (takeProfit || takeProfitTrigger) {
-            body.bracket_take_profit_price       = (takeProfitTrigger || takeProfit).toString();
-            body.bracket_take_profit_limit_price = (takeProfit || takeProfitTrigger).toString();
+            const tpTrigger   = parseFloat(takeProfitTrigger || takeProfit);
+            const slipFactor  = side === 'buy' ? (1 - BRACKET_SLIPPAGE_PCT) : (1 + BRACKET_SLIPPAGE_PCT);
+            const tpLimit     = parseFloat((tpTrigger * slipFactor).toPrecision(8));
+            body.bracket_take_profit_price       = tpTrigger.toString();
+            body.bracket_take_profit_limit_price = tpLimit.toString();
         }
 
         // Client order ID for idempotency
