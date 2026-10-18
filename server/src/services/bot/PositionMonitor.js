@@ -17,6 +17,9 @@ const DeltaOrderClient = require('../trading/DeltaOrderClient');
 const productCatalog = require('../ProductCatalog');
 const notificationService = require('../NotificationService');
 const { decryptData } = require('../../utils/encryption');
+const User = require('../../models/User');
+const config = require('../../config/env');
+const { assertLiveTradingAllowed } = require('../trading/liveTradingGuard');
 
 class PositionMonitor {
     constructor() {
@@ -363,7 +366,7 @@ class PositionMonitor {
         if (trade.mode === 'paper') {
             await this._closePaperTrade(trade, exitPrice, exitReason, contractValue, isLong);
         } else if (trade.mode === 'live') {
-            const client = await this._buildDeltaClient(trade.userId);
+            const client = await this._buildDeltaClient(trade.userId, { allowReduceOnly: true });
             if (!client) {
                 throw new Error(`No Delta client available to close live trade for user ${trade.userId}`);
             }
@@ -524,7 +527,7 @@ class PositionMonitor {
     // ─── Live Trade Monitoring ─────────────────────────────────────────────────
 
     async _checkLiveTrade(trade) {
-        const client = await this._buildDeltaClient(trade.userId);
+        const client = await this._buildDeltaClient(trade.userId, { allowReduceOnly: true });
         if (!client) return;
 
         // 1. Fetch positions from Delta
@@ -645,10 +648,13 @@ class PositionMonitor {
 
     // ─── Internal Helpers ──────────────────────────────────────────────────────
 
-    async _buildDeltaClient(userId) {
+    async _buildDeltaClient(userId, { allowReduceOnly = false } = {}) {
         try {
-            const apiKeyDoc = await ApiKey.findOne({ userId, exchange: 'delta', isActive: true });
-            if (!apiKeyDoc) return null;
+            const [apiKeyDoc, user] = await Promise.all([
+                ApiKey.findOne({ userId, exchange: 'delta', isActive: true }),
+                User.findById(userId).select('accountMode'),
+            ]);
+            assertLiveTradingAllowed({ user, apiKey: apiKeyDoc, config, allowReduceOnly });
             const apiKey = decryptData(apiKeyDoc.apiKeyEncrypted);
             const apiSecret = decryptData(apiKeyDoc.apiSecretEncrypted);
             return new DeltaOrderClient(apiKey, apiSecret);

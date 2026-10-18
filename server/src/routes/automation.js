@@ -23,7 +23,7 @@ router.use(authMiddleware);
 // ── GET /api/automation/status ───────────────────────────────────────────────
 router.get('/status', async (req, res) => {
     try {
-        const prefs  = await UserPreferences.findOne({}).sort({ updatedAt: -1 });
+        const prefs  = await UserPreferences.findOne({ userId: req.user.id });
         const status = automationEngine.getStatus();
 
         // For nextCycleAt: prefer live engine value, fall back to DB value
@@ -65,15 +65,17 @@ router.post('/start', async (req, res) => {
         }
 
         // Enable in DB first
-        await UserPreferences.updateMany(
-            {},
-            { $set: { [`${mode}Auto.enabled`]: true } }
+        await UserPreferences.updateOne(
+            { userId: req.user.id },
+            { $set: { [`${mode}Auto.enabled`]: true } },
+            { upsert: true, setDefaultsOnInsert: true }
         );
 
-        await automationEngine.startMode(mode);
+        await automationEngine.startMode(mode, req.user.id);
         res.json({ success: true, mode, running: true });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        const status = err.code === 'LIVE_TRADING_BLOCKED' ? 403 : 500;
+        res.status(status).json({ error: err.message });
     }
 });
 
@@ -86,12 +88,13 @@ router.post('/stop', async (req, res) => {
 
     try {
         // Disable in DB
-        await UserPreferences.updateMany(
-            {},
-            { $set: { [`${mode}Auto.enabled`]: false } }
+        await UserPreferences.updateOne(
+            { userId: req.user.id },
+            { $set: { [`${mode}Auto.enabled`]: false } },
+            { upsert: true, setDefaultsOnInsert: true }
         );
 
-        await automationEngine.stopMode(mode);
+        await automationEngine.stopMode(mode, req.user.id);
         res.json({ success: true, mode, running: false });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -121,25 +124,18 @@ router.patch('/settings', async (req, res) => {
     }
 
     try {
-        const query = req.user?.id ? { userId: req.user.id } : {};
-        let prefs = await UserPreferences.findOneAndUpdate(
+        const query = { userId: req.user.id };
+        const prefs = await UserPreferences.findOneAndUpdate(
             query,
             { $set: update },
-            { returnDocument: 'after' }
+            { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true }
         );
-        if (!prefs) {
-            prefs = await UserPreferences.findOneAndUpdate(
-                {},
-                { $set: update },
-                { returnDocument: 'after' }
-            );
-        }
 
         // If automation is running and interval changed, restart to pick up new interval
         const engineStatus = automationEngine.getStatus();
         const isRunning = typeof engineStatus[mode] === 'object' ? !!engineStatus[mode].running : !!engineStatus[mode];
         if (isRunning && settings.intervalMinutes !== undefined) {
-            await automationEngine.restartMode(mode);
+            await automationEngine.restartMode(mode, req.user.id);
         }
 
         res.json({ success: true, config: prefs[`${mode}Auto`] });
@@ -160,21 +156,23 @@ router.post('/reverse', async (req, res) => {
     try {
         if (enable) {
             // 1. Save reverseMode=true and enabled=true atomically
-            await UserPreferences.updateMany(
-                {},
-                { $set: { [`${mode}Auto.reverseMode`]: true, [`${mode}Auto.enabled`]: true } }
+            await UserPreferences.updateOne(
+                { userId: req.user.id },
+                { $set: { [`${mode}Auto.reverseMode`]: true, [`${mode}Auto.enabled`]: true } },
+                { upsert: true, setDefaultsOnInsert: true }
             );
             // 2. Stop first (if running) so startMode picks up fresh prefs
-            await automationEngine.stopMode(mode);
+            await automationEngine.stopMode(mode, req.user.id);
             // 3. Start — now reads reverseMode=true from DB
-            await automationEngine.startMode(mode);
+            await automationEngine.startMode(mode, req.user.id);
             res.json({ success: true, mode, running: true, reverseMode: true });
         } else {
             // Stop and clear the flag
-            await automationEngine.stopMode(mode);
-            await UserPreferences.updateMany(
-                {},
-                { $set: { [`${mode}Auto.reverseMode`]: false, [`${mode}Auto.enabled`]: false } }
+            await automationEngine.stopMode(mode, req.user.id);
+            await UserPreferences.updateOne(
+                { userId: req.user.id },
+                { $set: { [`${mode}Auto.reverseMode`]: false, [`${mode}Auto.enabled`]: false } },
+                { upsert: true, setDefaultsOnInsert: true }
             );
             res.json({ success: true, mode, running: false, reverseMode: false });
         }

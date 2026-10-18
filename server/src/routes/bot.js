@@ -16,6 +16,9 @@ const BotEvent = require('../models/BotEvent');
 const PaperWallet = require('../models/PaperWallet');
 const PaperPosition = require('../models/PaperPosition');
 const ApiKey = require('../models/ApiKey');
+const User = require('../models/User');
+const config = require('../config/env');
+const { assertLiveTradingAllowed } = require('../services/trading/liveTradingGuard');
 const DeltaOrderClient = require('../services/trading/DeltaOrderClient');
 const { decryptData } = require('../utils/encryption');
 
@@ -72,6 +75,11 @@ router.post('/start', async (req, res) => {
 
         // Conflict check: if starting live TradingBot, ensure AI Automation live mode is not running
         if (mode === 'live') {
+            if (paperBot.isRunning) {
+                return res.status(409).json({
+                    error: 'Paper TradingBot is currently running. Stop it before starting the live bot because breakout watchers are shared.',
+                });
+            }
             const automationEngine = req.app.get('automationEngine');
             if (automationEngine?.getStatus()?.live?.running) {
                 return res.status(409).json({
@@ -80,12 +88,11 @@ router.post('/start', async (req, res) => {
             }
 
             // Also check that user has an active Delta API key
-            const apiKeyDoc = await ApiKey.findOne({ userId, exchange: 'delta', isActive: true });
-            if (!apiKeyDoc) {
-                return res.status(400).json({
-                    error: 'No active Delta Exchange API key found. Please add your API key in Settings.',
-                });
-            }
+            const [apiKeyDoc, user] = await Promise.all([
+                ApiKey.findOne({ userId, exchange: 'delta', isActive: true }),
+                User.findById(userId).select('accountMode'),
+            ]);
+            assertLiveTradingAllowed({ user, apiKey: apiKeyDoc, config });
         }
 
         // Enable in TradingConfig
@@ -100,11 +107,12 @@ router.post('/start', async (req, res) => {
         const productCatalog = req.app.get('productCatalog');
 
         const bot = mode === 'paper' ? paperBot : liveBot;
-        await bot.start(io, wsManager, productCatalog);
+        await bot.start(io, wsManager, productCatalog, userId);
 
         res.json({ success: true, mode, running: true, isRunning: true });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        const status = err.code === 'LIVE_TRADING_BLOCKED' ? 403 : 500;
+        res.status(status).json({ error: err.message });
     }
 });
 
@@ -125,7 +133,7 @@ router.post('/stop', async (req, res) => {
         );
 
         const bot = mode === 'paper' ? paperBot : liveBot;
-        bot.stop();
+        bot.stop(userId);
 
         res.json({ success: true, mode, running: false, isRunning: false });
     } catch (err) {
@@ -227,7 +235,7 @@ router.get('/config/:mode', async (req, res) => {
                 budgetUSDT: 10,
                 maxLeverage: 20,
                 targetRoiPct: 5,
-                slAtrMultiplier: 5.0,
+                slAtrMultiplier: 1.5,
             });
         }
         res.json(config);
@@ -259,6 +267,10 @@ router.put('/config/:mode', async (req, res) => {
         if (req.body[key] !== undefined) {
             updates[key] = req.body[key];
         }
+    }
+    if (updates.minRewardRisk !== undefined) {
+        const minRewardRisk = Number(updates.minRewardRisk);
+        updates.minRewardRisk = Number.isFinite(minRewardRisk) ? Math.max(1, minRewardRisk) : 1;
     }
 
     try {

@@ -50,6 +50,7 @@ class TradingBot {
         this.isScanning = false;
         this.scanIntervalTimer = null;
         this._nextScanAt = null;
+        this._activeUserId = null;
 
         this.io = null;
         this.wsManager = null;
@@ -75,12 +76,19 @@ class TradingBot {
      * @param {object} wsManager
      * @param {object} productCatalog
      */
-    async start(io, wsManager, productCatalog) {
-        if (this.isRunning) return;
+    async start(io, wsManager, productCatalog, userId) {
+        if (!userId) throw new Error('TradingBot start requires a userId');
+        if (this.isRunning) {
+            if (String(this._activeUserId) !== String(userId)) {
+                throw new Error(`${this.mode} TradingBot is already running for another user`);
+            }
+            return;
+        }
 
         this.io = io;
         this.wsManager = wsManager;
         this.productCatalog = productCatalog;
+        this._activeUserId = String(userId);
         this.isRunning = true;
 
         // Attach candleStore to WebSocket manager if not already attached
@@ -119,9 +127,13 @@ class TradingBot {
     /**
      * Stop the bot.
      */
-    stop() {
+    stop(userId = null) {
+        if (userId && this._activeUserId && String(this._activeUserId) !== String(userId)) {
+            return;
+        }
         this.isRunning = false;
         this.isScanning = false;
+        this._activeUserId = null;
         if (this.scanIntervalTimer) {
             clearTimeout(this.scanIntervalTimer);
             this.scanIntervalTimer = null;
@@ -168,7 +180,7 @@ class TradingBot {
         }
 
         breakoutWatcher.disarmAll('emergency_stop');
-        this.stop();
+        this.stop(userId);
         this._emitStatus();
         return closeResult;
     }
@@ -183,6 +195,7 @@ class TradingBot {
             isRunning: this.isRunning,
             isScanning: this.isScanning,
             nextScanAt: this._nextScanAt,
+            userId: this._activeUserId,
             lastScan: this.lastScanResult,
             armedTripwires: breakoutWatcher.getArmedTripwires(),
         };
@@ -226,10 +239,13 @@ class TradingBot {
 
         try {
             // 1. Find users who have this bot mode enabled
-            let configs = await TradingConfig.find({ mode: this.mode, enabled: true });
+            const activeUserQuery = this._activeUserId ? { userId: this._activeUserId } : null;
+            if (!activeUserQuery) return;
+            let configs = await TradingConfig.find({ mode: this.mode, enabled: true, ...activeUserQuery });
             if (!configs || configs.length === 0) {
-                // If no enabled configs, check if there is an active user to initialize default config
-                const user = await User.findOne({}).sort({ createdAt: 1 });
+                // Initialize only the authenticated owner, never the first
+                // user in the database.
+                const user = await User.findById(this._activeUserId);
                 if (user) {
                     let defaultCfg = await TradingConfig.findOne({ userId: user._id, mode: this.mode });
                     if (!defaultCfg) {
@@ -241,7 +257,7 @@ class TradingBot {
                             enabled: true,
                         });
                     }
-                    configs = [defaultCfg];
+                    if (defaultCfg?.enabled) configs = [defaultCfg];
                 }
             }
 

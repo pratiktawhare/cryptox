@@ -73,10 +73,13 @@ const tradingConfigSchema = new mongoose.Schema(
         },
 
         // Minimum net reward/risk ratio required to take a trade
-        // Default 0.05: Allows high-win-rate scalping with wide SL and targeted ROI
+        // A trade should not be admitted unless expected net reward is at least
+        // this multiple of net risk. A sub-1 R:R default makes fees and losses
+        // dominate even with a high win rate.
         minRewardRisk: {
             type: Number,
-            default: 0.05,
+            default: 1.0,
+            min: 1.0,
         },
 
         // Minimum signal score (out of 8) required to enter
@@ -98,10 +101,10 @@ const tradingConfigSchema = new mongoose.Schema(
 
         // ── Position Sizing ─────────────────────────────────────────────────
         // SL = entry ± (ATR × slAtrMultiplier)
-        // Wide SL default: 5.0x ATR with safety liquidation buffer (noise immune)
+        // ATR multiplier used to derive the stop distance.
         slAtrMultiplier: {
             type: Number,
-            default: 5.0,
+            default: 1.5,
         },
 
         // TP safety: ensure TP > breakEvenCost × tpSafetyMultiplier

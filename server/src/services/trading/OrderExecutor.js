@@ -20,13 +20,16 @@ const TradeHistory = require('../../models/TradeHistory');
 const DeltaOrderClient = require('./DeltaOrderClient');
 const { decryptData } = require('../../utils/encryption');
 const positionTracker = require('./PositionTracker');
+const User = require('../../models/User');
+const config = require('../../config/env');
+const { assertLiveTradingAllowed } = require('./liveTradingGuard');
 
 // ─── Safety limits (configurable per user in Phase 9) ─────────────────────────
 const SAFETY = {
     MAX_LEVERAGE:      100,
     MIN_ORDER_SIZE:    1,
     MAX_CONCURRENT:    5,
-    MIN_RR_RATIO:      0.30,    // Lowered for scalp signals (high win rate, low R/R by design)
+    MIN_RR_RATIO:      1.00,    // Do not admit negative-expectancy scalp geometry by default
     REQUIRE_SL:        true,
     MIN_MARGIN_PCT:    0.1,
 };
@@ -47,24 +50,18 @@ class OrderExecutor {
 
         try {
             // Step 1: Load and decrypt API key
-            const client = await this._buildClient(userId);
+            const client = await this._buildClient(userId, {
+                allowReduceOnly: Boolean(params.isClose || params.reduceOnly),
+            });
 
             // Step 2: Pre-trade safety checks
             await this._safetyChecks(params, client);
 
             // Step 3: Place the order
-            let rawResponse;
-            try {
-                rawResponse = await client.placeOrder(params);
-            } catch (placeErr) {
-                if (placeErr.message?.includes('bracket_order_position_exists')) {
-                    console.log(`[OrderExecutor] 🔄 Bracket order already exists for this position. Retrying order placement without bracket legs...`);
-                    const fallbackParams = { ...params, stopLoss: null, takeProfit: null };
-                    rawResponse = await client.placeOrder(fallbackParams);
-                } else {
-                    throw placeErr;
-                }
-            }
+            // Never retry by silently removing protection. If the exchange
+            // rejects a bracketed entry, the safe outcome is no entry, not an
+            // unprotected position.
+            const rawResponse = await client.placeOrder(params);
             const order = rawResponse?.result;
 
             if (!order || !order.id) {
@@ -124,7 +121,7 @@ class OrderExecutor {
     // ─── Cancel an order ───────────────────────────────────────────────────────
 
     async cancel(userId, orderId, symbol, io = null) {
-        const client = await this._buildClient(userId);
+        const client = await this._buildClient(userId, { allowReduceOnly: true });
         const result = await client.cancelOrder(orderId, symbol);
 
         await TradeHistory.findOneAndUpdate(
@@ -153,11 +150,19 @@ class OrderExecutor {
 
     // ─── Build authenticated Delta client ─────────────────────────────────────
 
-    async _buildClient(userId) {
-        const apiKeyDoc = await ApiKey.findOne({ userId, exchange: 'delta', isActive: true });
-        if (!apiKeyDoc) {
-            throw new Error('No active Delta Exchange API key found. Please add one in Settings → API Keys.');
-        }
+    async _buildClient(userId, { allowReduceOnly = false } = {}) {
+        const [apiKeyDoc, user] = await Promise.all([
+            ApiKey.findOne({ userId, exchange: 'delta', isActive: true }),
+            User.findById(userId).select('accountMode'),
+        ]);
+
+        assertLiveTradingAllowed({
+            user,
+            apiKey: apiKeyDoc,
+            config,
+            allowReduceOnly,
+        });
+
         const apiKey    = decryptData(apiKeyDoc.apiKeyEncrypted);
         const apiSecret = decryptData(apiKeyDoc.apiSecretEncrypted);
         return new DeltaOrderClient(apiKey, apiSecret);

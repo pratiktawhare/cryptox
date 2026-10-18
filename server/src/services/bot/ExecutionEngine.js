@@ -15,6 +15,7 @@
  */
 
 const ApiKey = require('../../models/ApiKey');
+const User = require('../../models/User');
 const PaperWallet = require('../../models/PaperWallet');
 const PaperPosition = require('../../models/PaperPosition');
 const BotTrade = require('../../models/BotTrade');
@@ -24,6 +25,8 @@ const DeltaOrderClient = require('../trading/DeltaOrderClient');
 const productCatalog = require('../ProductCatalog');
 const { decryptData } = require('../../utils/encryption');
 const { calcTradeCosts } = require('./CostEngine');
+const config = require('../../config/env');
+const { assertLiveTradingAllowed } = require('../trading/liveTradingGuard');
 
 class ExecutionEngine {
     constructor() {
@@ -563,11 +566,28 @@ class ExecutionEngine {
 
         // 3. If the order filled immediately (instant limit fill or market order), activate inline.
         if (order.state === 'closed' || order.state === 'filled') {
+            const protectionVerified = await this._verifyProtection(client, symbol, orderId);
+            if (!protectionVerified) {
+                await this._logEvent(userId, 'live', 'PROTECTION_VERIFICATION_FAILED', 'critical',
+                    `[Live] Entry ${orderId} filled but Delta did not confirm both stop-loss and take-profit protection. Attempting reduce-only close.`,
+                    { symbol, orderId }
+                );
+                try {
+                    await client.cancelAllOrders(symbol);
+                    await client.closePosition(symbol, order.size_filled || quantity, side);
+                } catch (closeErr) {
+                    await this._logEvent(userId, 'live', 'EMERGENCY_CLOSE_FAILED', 'critical',
+                        `[Live] Could not unwind unprotected entry ${orderId}: ${closeErr.message}`,
+                        { symbol, orderId, error: closeErr.message }
+                    );
+                }
+                return { success: false, reason: 'unverified_protection' };
+            }
             return await this._activateLiveTrade({
                 userId, symbol, direction, entryPrice, stopLoss, stopLossTrigger, takeProfit, takeProfitTrigger,
                 quantity, leverage, margin, signalScore, regime,
                 walletBalanceAtEntry, effectiveBudgetAtEntry, io,
-                orderId, filledOrder: order, reverseMode: Boolean(params.reverseMode),
+                orderId, filledOrder: order, reverseMode: Boolean(params.reverseMode), client,
             });
         }
 
@@ -626,6 +646,7 @@ class ExecutionEngine {
             quantity, leverage, margin, signalScore, regime,
             walletBalanceAtEntry, effectiveBudgetAtEntry, io,
             orderId, filledOrder, reverseMode,
+            client: providedClient = null,
             existingTradeId = null,  // if we're updating a pending_entry record
         } = params;
 
@@ -635,6 +656,37 @@ class ExecutionEngine {
         const actualFilledSize = filledOrder.size_filled
             ? parseInt(filledOrder.size_filled)
             : quantity;
+
+        const client = providedClient || await this._buildDeltaClient(userId, { allowReduceOnly: true });
+        const protectionVerified = await this._verifyProtection(client, symbol, orderId);
+        if (!protectionVerified) {
+            await this._logEvent(userId, 'live', 'PROTECTION_VERIFICATION_FAILED', 'critical',
+                `[Live] Filled entry ${orderId} has no confirmed SL/TP bracket. Attempting reduce-only close.`,
+                { symbol, orderId }
+            );
+            try {
+                await client.cancelAllOrders(symbol);
+                await client.closePosition(symbol, actualFilledSize, direction === 'long' ? 'buy' : 'sell');
+            } catch (closeErr) {
+                await this._logEvent(userId, 'live', 'EMERGENCY_CLOSE_FAILED', 'critical',
+                    `[Live] Could not unwind unprotected filled entry ${orderId}: ${closeErr.message}`,
+                    { symbol, orderId, error: closeErr.message }
+                );
+                throw closeErr;
+            }
+
+            if (existingTradeId) {
+                const pendingTrade = await BotTrade.findById(existingTradeId);
+                if (pendingTrade) {
+                    pendingTrade.result = 'cancelled';
+                    pendingTrade.entryOrderStatus = 'filled';
+                    pendingTrade.exitReason = 'emergency';
+                    pendingTrade.exitTime = new Date();
+                    await pendingTrade.save();
+                }
+            }
+            return { success: false, reason: 'unverified_protection' };
+        }
 
         let trade;
         if (existingTradeId) {
@@ -900,7 +952,7 @@ class ExecutionEngine {
                 return { success: true, trade: trade.toObject() };
 
             } else if (mode === 'live') {
-                const client = await this._buildDeltaClient(userId);
+                const client = await this._buildDeltaClient(userId, { allowReduceOnly: true });
 
                 // Cancel all open orders for this symbol first
                 try {
@@ -949,11 +1001,12 @@ class ExecutionEngine {
 
     // ─── Internal Helpers ──────────────────────────────────────────────────────
 
-    async _buildDeltaClient(userId) {
-        const apiKeyDoc = await ApiKey.findOne({ userId, exchange: 'delta', isActive: true });
-        if (!apiKeyDoc) {
-            throw new Error('No active Delta Exchange API key found for user');
-        }
+    async _buildDeltaClient(userId, { allowReduceOnly = false } = {}) {
+        const [apiKeyDoc, user] = await Promise.all([
+            ApiKey.findOne({ userId, exchange: 'delta', isActive: true }),
+            User.findById(userId).select('accountMode'),
+        ]);
+        assertLiveTradingAllowed({ user, apiKey: apiKeyDoc, config, allowReduceOnly });
         const apiKey = decryptData(apiKeyDoc.apiKeyEncrypted);
         const apiSecret = decryptData(apiKeyDoc.apiSecretEncrypted);
         return new DeltaOrderClient(apiKey, apiSecret);
@@ -995,6 +1048,10 @@ class ExecutionEngine {
             const resp = await client.getOpenOrders(symbol);
             const openOrders = resp?.result || [];
 
+            const posResp = await client.getPositions();
+            const positions = posResp?.result || [];
+            const pos = positions.find((p) => p.product_symbol === symbol);
+
             // A valid bracket order will have stop or limit orders attached,
             // or the entry order response has bracket properties.
             // If open orders contain at least one order for the symbol (stop order or bracket), protection exists.
@@ -1003,19 +1060,16 @@ class ExecutionEngine {
                 o.bracket_stop_loss_price ||
                 o.stop_price ||
                 o.bracket_take_profit_price
-            );
+            ) || Boolean(pos && (pos.bracket_stop_loss_price || pos.stop_loss_price));
 
             // Also check positions to ensure bracket order is attached to position
-            const posResp = await client.getPositions();
-            const positions = posResp?.result || [];
-            const pos = positions.find((p) => p.product_symbol === symbol);
-
-            // If Delta confirms open bracket orders or position has stops, return true
-            return hasStopOrBracket || (pos && (pos.bracket_stop_loss_price || pos.stop_loss_price));
+            const hasTakeProfit = openOrders.some((o) =>
+                o.stop_order_type === 'take_profit_order' || o.bracket_take_profit_price
+            ) || Boolean(pos && (pos.bracket_take_profit_price || pos.take_profit_price));
+            return hasStopOrBracket && hasTakeProfit;
         } catch (err) {
-            console.warn(`[ExecutionEngine] Bracket verification warn: ${err.message}. Assuming true if order was placed with bracket.`);
-            // If API query fails, fallback to checking order placed parameters
-            return true;
+            console.warn(`[ExecutionEngine] Bracket verification failed closed: ${err.message}`);
+            return false;
         }
     }
 

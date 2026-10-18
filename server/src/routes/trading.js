@@ -18,6 +18,9 @@ const authenticate = require('../middleware/auth');
 const orderExecutor  = require('../services/trading/OrderExecutor');
 const positionTracker = require('../services/trading/PositionTracker');
 const TradeHistory   = require('../models/TradeHistory');
+const User           = require('../models/User');
+const config         = require('../config/env');
+const { assertLiveTradingAllowed } = require('../services/trading/liveTradingGuard');
 
 const router = express.Router();
 router.use(authenticate);
@@ -93,6 +96,8 @@ router.put('/order', async (req, res) => {
         if (!activeKey) {
             return res.status(400).json({ error: 'No active API Key found' });
         }
+        const user = await User.findById(req.user.id).select('accountMode');
+        assertLiveTradingAllowed({ user, apiKey: activeKey, config });
 
         const apiKey = decryptData(activeKey.apiKeyEncrypted);
         const apiSecret = decryptData(activeKey.apiSecretEncrypted);
@@ -369,6 +374,8 @@ router.patch('/position/:symbol', async (req, res) => {
         if (!activeKey) {
             return res.status(400).json({ error: 'No active API Key found for live trading' });
         }
+        const user = await User.findById(req.user.id).select('accountMode');
+        assertLiveTradingAllowed({ user, apiKey: activeKey, config });
 
         const apiKey = decryptData(activeKey.apiKeyEncrypted);
         const apiSecret = decryptData(activeKey.apiSecretEncrypted);

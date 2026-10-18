@@ -23,7 +23,8 @@ const { calcVolumeRatio } = require('./indicators/volume');
 const { calcMomentum } = require('./indicators/momentum');
 const { detectRegime } = require('./RegimeDetector');
 const { scoreSignal } = require('./SignalScorer');
-const { calcRisk } = require('./RiskEngine');
+const { calcRisk, checkDailyLimits } = require('./RiskEngine');
+const { FEES } = require('./CostEngine');
 
 class BacktestEngine {
     /**
@@ -69,12 +70,18 @@ class BacktestEngine {
             maxDailyLossPct: 10,
             maxConsecutiveLosses: 3,
             cooldownSeconds: 60,
-            minRewardRisk: 0.05,
+            minRewardRisk: 1.0,
             minSignalScore: 5,
-            slAtrMultiplier: 5.0,
+            slAtrMultiplier: 1.5,
             tpSafetyMultiplier: 2.0,
             maxLeverage: 20,
             maxOpenPositions: 1,
+            // Conservative execution assumptions. Callers can override these
+            // for exchange-specific fee tiers and measured market quality.
+            entryFeeRate: FEES.MAKER_RATE,
+            exitFeeRate: FEES.TAKER_RATE,
+            slippageBps: 2,
+            fundingRate: 0.0001,
             ...(params.config || {}),
         };
 
@@ -116,35 +123,47 @@ class BacktestEngine {
             }
 
             // ── Check open position for TP / SL hit ──────────────────────────
-            if (openPosition) {
+            if (openPosition && openPosition.entryTime <= candle.time * 1000) {
                 const isLong = openPosition.direction === 'long';
                 let exitPrice = null;
                 let exitReason = null;
 
                 if (isLong) {
                     if (candle.low <= openPosition.stopLoss) {
-                        exitPrice = openPosition.stopLoss;
+                        // If the bar opens through the stop, a stop cannot fill
+                        // at the requested price. Use the worse open price.
+                        exitPrice = candle.open <= openPosition.stopLoss ? candle.open : openPosition.stopLoss;
                         exitReason = 'stop_loss';
                     } else if (candle.high >= openPosition.takeProfit) {
-                        exitPrice = openPosition.takeProfit;
+                        exitPrice = candle.open >= openPosition.takeProfit ? candle.open : openPosition.takeProfit;
                         exitReason = 'take_profit';
                     }
                 } else {
                     if (candle.high >= openPosition.stopLoss) {
-                        exitPrice = openPosition.stopLoss;
+                        exitPrice = candle.open >= openPosition.stopLoss ? candle.open : openPosition.stopLoss;
                         exitReason = 'stop_loss';
                     } else if (candle.low <= openPosition.takeProfit) {
-                        exitPrice = openPosition.takeProfit;
+                        exitPrice = candle.open <= openPosition.takeProfit ? candle.open : openPosition.takeProfit;
                         exitReason = 'take_profit';
                     }
                 }
 
                 if (exitPrice !== null) {
+                    // Apply adverse slippage to the executable exit price.
+                    const slip = exitPrice * (stratConfig.slippageBps / 10_000);
+                    exitPrice = isLong ? exitPrice - slip : exitPrice + slip;
                     const priceDiff = isLong ? (exitPrice - openPosition.entryPrice) : (openPosition.entryPrice - exitPrice);
                     const grossPnl = priceDiff * openPosition.quantity * contractValue;
-                    const exitFee = exitPrice * openPosition.quantity * contractValue * (0.0005 * 1.18); // 0.05% taker fee + 18% GST
+                    const exitFee = exitPrice * openPosition.quantity * contractValue * stratConfig.exitFeeRate;
+                    const holdHours = Math.max(0, (candle.time * 1000 - openPosition.entryTime) / 3_600_000);
+                    const fundingPeriods = holdHours / 8;
+                    const fundingDirection = isLong ? 1 : -1;
+                    const fundingCost = Math.max(
+                        0,
+                        stratConfig.fundingRate * fundingPeriods * openPosition.entryNotional * fundingDirection
+                    );
                     const totalFees = openPosition.entryFee + exitFee;
-                    const netPnl = grossPnl - totalFees;
+                    const netPnl = grossPnl - totalFees - fundingCost;
                     const isWin = netPnl >= 0;
 
                     currentBalance += netPnl;
@@ -176,6 +195,8 @@ class BacktestEngine {
                         margin: openPosition.margin,
                         grossPnl: parseFloat(grossPnl.toFixed(4)),
                         fees: parseFloat(totalFees.toFixed(4)),
+                        fundingCost: parseFloat(fundingCost.toFixed(4)),
+                        slippage: parseFloat((openPosition.entrySlippage + slip * openPosition.quantity * contractValue).toFixed(4)),
                         netPnl: parseFloat(netPnl.toFixed(4)),
                         result: isWin ? 'win' : 'loss',
                         exitReason,
@@ -194,11 +215,10 @@ class BacktestEngine {
 
             // ── Evaluate new entry signal if no open position ────────────────
             if (!openPosition && currentBalance > 1.0) {
-                // Check safety gates (cooldown)
+                // Check the same cooldown and loss gates used in live scans.
                 const dailyStats = { dailyLoss, consecutiveLosses, cooldownUntil };
-                if ((candle.time * 1000) < cooldownUntil) {
-                    continue; // Skip this bar due to cooldown
-                }
+                const limitCheck = checkDailyLimits(stratConfig, currentBalance, dailyStats);
+                if (!limitCheck.ok) continue;
 
                 // Window of 35 candles for indicators
                 const window = candles.slice(i - 35, i + 1);
@@ -231,7 +251,7 @@ class BacktestEngine {
                     symbol,
                     close: currentClose,
                     spread: atr_5m * 0.05,
-                    fundingRate: 0.0001,
+                    fundingRate: stratConfig.fundingRate,
                     '5m': {
                         ema9: ema9_5m,
                         ema21: ema21_5m,
@@ -251,10 +271,14 @@ class BacktestEngine {
                 if (scoreResult.decision === 'TRADE' && scoreResult.score >= stratConfig.minSignalScore) {
                     // Next candle open simulates realistic execution without lookahead bias
                     const nextCandle = i + 1 < candles.length ? candles[i + 1] : null;
-                    const entryPrice = nextCandle ? nextCandle.open : currentClose;
+                    const plannedEntryPrice = nextCandle ? nextCandle.open : currentClose;
                     const tradeDirection = stratConfig.reverseMode
                         ? (scoreResult.direction === 'long' ? 'short' : 'long')
                         : scoreResult.direction;
+                    const entrySlip = plannedEntryPrice * (stratConfig.slippageBps / 10_000);
+                    const entryPrice = tradeDirection === 'long'
+                        ? plannedEntryPrice + entrySlip
+                        : plannedEntryPrice - entrySlip;
 
                     const riskResult = calcRisk({
                         config: stratConfig,
@@ -270,7 +294,8 @@ class BacktestEngine {
                     });
 
                     if (riskResult.valid && riskResult.qty > 0) {
-                        const entryFee = entryPrice * riskResult.qty * contractValue * (0.0002 * 1.18); // 0.02% maker fee + 18% GST
+                        const entryNotional = entryPrice * riskResult.qty * contractValue;
+                        const entryFee = entryNotional * stratConfig.entryFeeRate;
                         openPosition = {
                             symbol,
                             direction: tradeDirection,
@@ -282,11 +307,83 @@ class BacktestEngine {
                             leverage: riskResult.leverage,
                             margin: riskResult.margin,
                             entryFee,
+                            entryNotional,
+                            entrySlippage: entrySlip * riskResult.qty * contractValue,
                             reverseMode: Boolean(stratConfig.reverseMode),
                         };
                     }
                 }
             }
+
+            // Mark open risk to market on every completed bar so drawdown is
+            // not understated merely because a stop has not closed yet.
+            if (openPosition && openPosition.entryTime <= candle.time * 1000) {
+                const isLong = openPosition.direction === 'long';
+                const unrealised = (isLong
+                    ? candle.close - openPosition.entryPrice
+                    : openPosition.entryPrice - candle.close)
+                    * openPosition.quantity * contractValue;
+                const markedEquity = currentBalance + unrealised - openPosition.entryFee;
+                peakBalance = Math.max(peakBalance, markedEquity);
+                const dd = peakBalance > 0 ? ((peakBalance - markedEquity) / peakBalance) * 100 : 0;
+                maxDrawdown = Math.max(maxDrawdown, dd);
+            }
+        }
+
+        // Do not hide the P&L of a position that is still open when the data
+        // ends. Force a conservative market close at the final close and apply
+        // the same costs as an intraperiod exit.
+        if (openPosition) {
+            const lastCandle = candles[candles.length - 1];
+            const isLong = openPosition.direction === 'long';
+            const rawExitPrice = lastCandle.close;
+            const slip = rawExitPrice * (stratConfig.slippageBps / 10_000);
+            const exitPrice = isLong ? rawExitPrice - slip : rawExitPrice + slip;
+            const priceDiff = isLong
+                ? exitPrice - openPosition.entryPrice
+                : openPosition.entryPrice - exitPrice;
+            const grossPnl = priceDiff * openPosition.quantity * contractValue;
+            const exitFee = exitPrice * openPosition.quantity * contractValue * stratConfig.exitFeeRate;
+            const holdHours = Math.max(0, (lastCandle.time * 1000 - openPosition.entryTime) / 3_600_000);
+            const fundingCost = Math.max(
+                0,
+                stratConfig.fundingRate * (holdHours / 8) * openPosition.entryNotional * (isLong ? 1 : -1)
+            );
+            const fees = openPosition.entryFee + exitFee;
+            const netPnl = grossPnl - fees - fundingCost;
+            currentBalance += netPnl;
+            peakBalance = Math.max(peakBalance, currentBalance);
+            maxDrawdown = Math.max(
+                maxDrawdown,
+                peakBalance > 0 ? ((peakBalance - currentBalance) / peakBalance) * 100 : 0
+            );
+
+            trades.push({
+                symbol,
+                direction: openPosition.direction,
+                entryTime: openPosition.entryTime,
+                exitTime: lastCandle.time * 1000,
+                durationMinutes: Math.round((lastCandle.time * 1000 - openPosition.entryTime) / 60000),
+                entryPrice: openPosition.entryPrice,
+                exitPrice,
+                quantity: openPosition.quantity,
+                leverage: openPosition.leverage,
+                margin: openPosition.margin,
+                grossPnl: parseFloat(grossPnl.toFixed(4)),
+                fees: parseFloat(fees.toFixed(4)),
+                fundingCost: parseFloat(fundingCost.toFixed(4)),
+                slippage: parseFloat((openPosition.entrySlippage + slip * openPosition.quantity * contractValue).toFixed(4)),
+                netPnl: parseFloat(netPnl.toFixed(4)),
+                result: netPnl >= 0 ? 'win' : 'loss',
+                exitReason: 'end_of_test',
+                balanceAfter: parseFloat(currentBalance.toFixed(2)),
+            });
+            equityCurve.push({
+                time: lastCandle.time * 1000,
+                balance: parseFloat(currentBalance.toFixed(2)),
+                trade: 'end_of_test',
+            });
+            openPosition = null;
         }
 
         // 4. Aggregate Performance Metrics

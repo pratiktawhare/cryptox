@@ -12,7 +12,7 @@
  *
  * SL/TP formula:
  *   sl = entry ∓ (ATR × slAtrMultiplier)
- *   tpFromRR   = entry ± (slDist × minRewardRisk)
+ *   tpFromRR   = entry ± (slDist × minRewardRisk plus execution costs)
  *   tpFromCost = entry ± (breakEvenAbs × tpSafetyMultiplier)
  *   tp = best of (tpFromRR, tpFromCost)       → whichever is more conservative
  *
@@ -73,6 +73,9 @@ function calcRisk(params) {
             const remainSec = Math.ceil((cooldownUntil - Date.now()) / 1000);
             return fail(`Cooldown active — ${remainSec}s remaining`);
         }
+
+        const limits = checkDailyLimits(config, actualAvailableBalance, dailyStats);
+        if (!limits.ok) return fail(limits.reason);
     }
 
     // ── Step 1: Effective budget & Wallet Part Sizing ─────────────────────────
@@ -127,7 +130,7 @@ function calcRisk(params) {
     }
 
     // ── Step 5: Margin check ──────────────────────────────────────────────────
-    const margin = (qty * contractValue * entryPrice) / leverage;
+    let margin = (qty * contractValue * entryPrice) / leverage;
     if (margin > actualAvailableBalance) {
         return fail(`Required margin ($${margin.toFixed(2)}) exceeds available balance ($${actualAvailableBalance.toFixed(2)})`);
     }
@@ -137,7 +140,10 @@ function calcRisk(params) {
     // Required Price Move = (Target Net Profit + Total Costs) / (qty * contractValue)
     // = entryPrice * (targetRoiPct / (100 * leverage)) + breakEvenAbs
     const targetRoiPct = config.targetRoiPct > 0 ? config.targetRoiPct : 5;
-    const minRR        = config.targetRoiPct > 0 ? 0.05 : (config.minRewardRisk > 0 ? config.minRewardRisk : 0.05);
+    // The configured minimum R:R must be honored even when a target ROI is
+    // configured. The previous hard-coded 0.05 allowed trades whose expected
+    // reward was only a few cents for every dollar risked.
+    const minRR        = Math.max(1.0, config.minRewardRisk > 0 ? config.minRewardRisk : 1.0);
 
     // Preliminary target price based on targeted ROI %
     const roiPriceDist = entryPrice * (targetRoiPct / (100 * leverage));
@@ -158,9 +164,20 @@ function calcRisk(params) {
         minRewardRisk: minRR,
     });
 
-    // Required Target distance = required ROI price move + breakEvenAbs (Delta fees with GST + spread)
+    // Use ATR for the stop distance. The previous implementation used
+    // `target distance × multiplier`, while ignoring ATR entirely and often
+    // produced a structurally negative reward/risk profile.
+    const slMultiplier = config.slAtrMultiplier > 0 ? config.slAtrMultiplier : 1.5;
+    const maxSafeSlDistance = entryPrice * ((1 / leverage) * 0.85);
+    const minSafeSlDistance = Math.max(atr * 0.5, entryPrice * 0.002);
+    let slDistance = Math.min(atr * slMultiplier, maxSafeSlDistance);
+    slDistance = Math.max(slDistance, Math.min(minSafeSlDistance, maxSafeSlDistance));
+
+    // Required target distance clears costs, the configured ROI objective, and
+    // the configured minimum net R:R against the ATR-derived stop.
     const requiredTpDist = Math.max(
         roiPriceDist + cost.breakEvenAbs,
+        slDistance * minRR + cost.breakEvenAbs * (minRR + 1),
         cost.breakEvenAbs * (config.tpSafetyMultiplier || 1.5),
         entryPrice * 0.002 // at least 0.2% move to safely clear spread
     );
@@ -176,25 +193,7 @@ function calcRisk(params) {
         ? parseFloat((entryPrice + tpTriggerDist).toFixed(8))
         : parseFloat((entryPrice - tpTriggerDist).toFixed(8));
 
-    // ── Step 7: Stop Loss calculation (Target × Multiplier) ───────────────────
-    // Multiplies target distance by configured multiplier (e.g. 0.33% target × 4x = 1.32% stop loss)
-    const slMultiplier = config.slAtrMultiplier > 0 ? config.slAtrMultiplier : 4.0;
-    let slDistance = requiredTpDist * slMultiplier;
-
-    // Safeguard 1: Ensure SL distance does NOT exceed 85% of liquidation distance
-    // For 20x leverage, liquidation occurs around ~4.5% to 5.0% adverse move.
-    // Clamping to 85% of (1/leverage) ensures SL always triggers cleanly before liquidation.
-    const maxSafeSlDistance = entryPrice * ((1 / leverage) * 0.85);
-    if (slDistance > maxSafeSlDistance) {
-        slDistance = maxSafeSlDistance;
-    }
-
-    // Safeguard 2: Minimum safe distance to prevent instant SL on spread/noise (at least 0.2% or 0.5x target)
-    const minSafeSlDistance = Math.max(requiredTpDist * 0.5, entryPrice * 0.002);
-    if (slDistance < minSafeSlDistance) {
-        slDistance = minSafeSlDistance;
-    }
-
+    // ── Step 7: Stop Loss calculation ─────────────────────────────────────────
     const stopLoss = isLong
         ? parseFloat((entryPrice - slDistance).toFixed(8))
         : parseFloat((entryPrice + slDistance).toFixed(8));
@@ -202,6 +201,19 @@ function calcRisk(params) {
     if (stopLoss <= 0) {
         return fail('Calculated SL price is invalid (≤ 0)');
     }
+
+    // Enforce the configured dollar risk from the actual stop distance. The
+    // old implementation sized from wallet parts only, so a wide stop could
+    // risk far more than riskPerTradePct advertised.
+    const maxQtyByRisk = Math.floor(riskAmt / (contractValue * slDistance));
+    if (maxQtyByRisk < minQty) {
+        return fail(`Configured risk budget ($${riskAmt.toFixed(4)}) cannot cover the minimum position at the calculated stop distance`);
+    }
+    qty = Math.min(qty, maxQtyByRisk);
+    if (qty < minQty) {
+        return fail(`Risk-based position size is below minimum quantity (${minQty})`);
+    }
+    margin = (qty * contractValue * entryPrice) / leverage;
 
     // Stop Loss Trigger: Keep trigger very close to the stop loss limit price (97% of SL distance)
     // so the trade is given room to breathe until ~1%, while keeping a tight buffer so Delta executes reliably.
@@ -287,10 +299,33 @@ function fail(reason) {
  * @returns {{ ok: boolean, reason: string|null }}
  */
 function checkDailyLimits(config, actualAvailableBalance, dailyStats) {
-    if (dailyStats.cooldownUntil && Date.now() < dailyStats.cooldownUntil) {
-        const remainSec = Math.ceil((dailyStats.cooldownUntil - Date.now()) / 1000);
+    const stats = dailyStats || {};
+    if (stats.cooldownUntil && Date.now() < stats.cooldownUntil) {
+        const remainSec = Math.ceil((stats.cooldownUntil - Date.now()) / 1000);
         return { ok: false, reason: `Cooldown: ${remainSec}s remaining` };
     }
+
+    const effectiveBudget = Math.min(
+        config?.budgetUSDT > 0 ? config.budgetUSDT : actualAvailableBalance,
+        Math.max(0, actualAvailableBalance || 0)
+    );
+    const maxDailyLossPct = config?.maxDailyLossPct > 0 ? config.maxDailyLossPct : 0;
+    const maxDailyLoss = effectiveBudget * (maxDailyLossPct / 100);
+    if (maxDailyLossPct > 0 && (stats.dailyLoss || 0) >= maxDailyLoss) {
+        return {
+            ok: false,
+            reason: `Daily loss limit reached ($${Number(stats.dailyLoss || 0).toFixed(4)} / $${maxDailyLoss.toFixed(4)})`,
+        };
+    }
+
+    const maxConsecutiveLosses = config?.maxConsecutiveLosses > 0 ? config.maxConsecutiveLosses : 0;
+    if (maxConsecutiveLosses > 0 && (stats.consecutiveLosses || 0) >= maxConsecutiveLosses) {
+        return {
+            ok: false,
+            reason: `Consecutive-loss limit reached (${stats.consecutiveLosses} / ${maxConsecutiveLosses})`,
+        };
+    }
+
     return { ok: true, reason: null };
 }
 

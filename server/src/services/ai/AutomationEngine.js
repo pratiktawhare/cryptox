@@ -21,6 +21,10 @@ const PaperPosition    = require('../../models/PaperPosition');
 const notificationSvc  = require('../NotificationService');
 const autoSignalWatcher = require('./AutoSignalWatcher');
 const productCatalog   = require('../ProductCatalog');
+const ApiKey            = require('../../models/ApiKey');
+const User              = require('../../models/User');
+const config            = require('../../config/env');
+const { assertLiveTradingAllowed } = require('../trading/liveTradingGuard');
 
 // IST offset
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
@@ -36,6 +40,7 @@ class AutomationEngine {
         this._trailTimer    = null;
         this._reportTimer   = null;
         this._running       = { paper: false, live: false };
+        this._activeUserId  = { paper: null, live: null };
         this._nextCycleAt   = { paper: null, live: null };
         this._io            = null;
         this._signalEngine  = null;
@@ -70,14 +75,28 @@ class AutomationEngine {
 
     // ─── Public control ─────────────────────────────────────────────────────
 
-    async startMode(mode) {
+    async startMode(mode, userId) {
+        if (!['paper', 'live'].includes(mode)) throw new Error(`Invalid automation mode: ${mode}`);
+        if (!userId) throw new Error('Automation requires a userId');
+        const owner = this._activeUserId[mode];
+        if (this._running[mode] && owner && String(owner) !== String(userId)) {
+            throw new Error(`${mode} automation is already running for another user`);
+        }
         if (this._running[mode]) {
             console.log(`[AutomationEngine] ${mode} already running`);
             return;
         }
 
-        const prefs = await this._loadPrefs();
+        const prefs = await this._loadPrefs(userId);
         const cfg   = prefs?.[`${mode}Auto`];
+
+        if (mode === 'live') {
+            const [apiKey, user] = await Promise.all([
+                ApiKey.findOne({ userId, exchange: 'delta', isActive: true }),
+                User.findById(userId).select('accountMode'),
+            ]);
+            assertLiveTradingAllowed({ user, apiKey, config });
+        }
 
         if (!cfg?.enabled) {
             console.log(`[AutomationEngine] ${mode} not enabled in preferences — enabling now`);
@@ -85,38 +104,43 @@ class AutomationEngine {
         }
 
         this._running[mode] = true;
+        this._activeUserId[mode] = String(userId);
         const intervalMin = cfg?.intervalMinutes || 30;
         this._nextCycleAt[mode] = Date.now() + intervalMin * 60 * 1000;
         console.log(`[AutomationEngine] ▶ Starting ${mode} automation (every ${intervalMin}m, next at ${new Date(this._nextCycleAt[mode]).toISOString()})`);
 
         // Persist nextCycleAt so page-refresh shows correct countdown
-        UserPreferences.updateMany({}, { $set: { [`${mode}Auto.nextCycleAt`]: new Date(this._nextCycleAt[mode]) } }).catch(() => {});
+        UserPreferences.updateOne({ userId }, { $set: { [`${mode}Auto.nextCycleAt`]: new Date(this._nextCycleAt[mode]) } }).catch(() => {});
 
         this._emit('automation_status', this.getStatus());
 
         // Run first cycle immediately, then schedule
-        this._runCycle(mode).catch(e => console.error(`[AutomationEngine] First cycle error:`, e.message));
+        this._runCycle(mode, userId).catch(e => console.error(`[AutomationEngine] First cycle error:`, e.message));
         this[`_${mode}Timer`] = setInterval(
-            () => this._runCycle(mode).catch(e => console.error(`[AutomationEngine] Cycle error:`, e.message)),
+            () => this._runCycle(mode, userId).catch(e => console.error(`[AutomationEngine] Cycle error:`, e.message)),
             intervalMin * 60 * 1000
         );
     }
 
-    async stopMode(mode) {
+    async stopMode(mode, userId = null) {
+        if (userId && this._activeUserId[mode] && String(this._activeUserId[mode]) !== String(userId)) {
+            throw new Error(`${mode} automation is owned by another user`);
+        }
         if (this[`_${mode}Timer`]) {
             clearInterval(this[`_${mode}Timer`]);
             this[`_${mode}Timer`] = null;
         }
         this._running[mode] = false;
+        this._activeUserId[mode] = null;
         this._nextCycleAt[mode] = null;
         this._emit('automation_status', this.getStatus());
         console.log(`[AutomationEngine] ⏹ Stopped ${mode} automation`);
     }
 
     /** Called when user changes intervalMinutes — reschedules the timer */
-    async restartMode(mode) {
-        await this.stopMode(mode);
-        await this.startMode(mode);
+    async restartMode(mode, userId) {
+        await this.stopMode(mode, userId);
+        await this.startMode(mode, userId);
     }
 
     getStatus() {
@@ -134,19 +158,19 @@ class AutomationEngine {
 
     // ─── Core cycle ─────────────────────────────────────────────────────────
 
-    async _runCycle(mode) {
-        if (!this._running[mode]) return; // Guard: only run if actually started
+    async _runCycle(mode, userId) {
+        if (!this._running[mode] || String(this._activeUserId[mode]) !== String(userId)) return;
 
         const cycleStart = Date.now();
         console.log(`[AutomationEngine] 🔄 ${mode.toUpperCase()} cycle start`);
 
-        const prefs = await this._loadPrefs();
+        const prefs = await this._loadPrefs(userId);
         const cfg   = prefs?.[`${mode}Auto`] || {};
         const date  = istDateStr();
 
         const intervalMin = cfg?.intervalMinutes || 30;
         this._nextCycleAt[mode] = Date.now() + intervalMin * 60 * 1000;
-        UserPreferences.updateMany({}, { $set: { [`${mode}Auto.nextCycleAt`]: new Date(this._nextCycleAt[mode]) } }).catch(() => {});
+        UserPreferences.updateOne({ userId }, { $set: { [`${mode}Auto.nextCycleAt`]: new Date(this._nextCycleAt[mode]) } }).catch(() => {});
         this._emit('automation_status', this.getStatus());
 
         // ── Balance check ────────────────────────────────────────────────────
@@ -353,8 +377,8 @@ class AutomationEngine {
         });
 
         // ── Update lastCycleAt in prefs ───────────────────────────────────────
-        await UserPreferences.updateMany(
-            {},
+        await UserPreferences.updateOne(
+            { userId },
             { $set: { [`${mode}Auto.lastCycleAt`]: new Date() } }
         );
 
@@ -378,19 +402,8 @@ class AutomationEngine {
     async _executePaper(signal, prefs, cfg) {
         if (!this._paperEngine) throw new Error('PaperTradingEngine not connected');
 
-        const PaperWallet = require('../../models/PaperWallet');
-        const User = require('../../models/User');
-
-        // Prefer userId from loaded prefs (which are the active user's prefs)
-        let userId = prefs?.userId ? String(prefs.userId) : null;
-        if (!userId) {
-            const pw = await PaperWallet.findOne({}).sort({ updatedAt: -1 });
-            userId = pw?.userId ? String(pw.userId) : null;
-        }
-        if (!userId) {
-            const user = await User.findOne({});
-            userId = user?._id ? String(user._id) : 'default_user';
-        }
+        const userId = prefs?.userId ? String(prefs.userId) : null;
+        if (!userId) throw new Error('Paper automation preferences are not linked to a user');
         console.log(`[AutomationEngine] 🤖 Placing paper order for userId: ${userId} | ${signal.symbol} ${signal.action}`);
 
         if (signal.entry) {
@@ -422,11 +435,15 @@ class AutomationEngine {
 
     async _executeLive(signal, prefs) {
         if (!this._orderExecutor) throw new Error('OrderExecutor not connected');
-        const User = require('../../models/User');
-        const user = await User.findOne({});
+        const userId = prefs?.userId ? String(prefs.userId) : null;
+        if (!userId) throw new Error('Live automation preferences are not linked to a user');
+        const user = await User.findById(userId).select('accountMode');
         if (!user) throw new Error('No user found for live execution');
 
-        const historyDoc = await this._orderExecutor.execute(user._id, {
+        const apiKey = await ApiKey.findOne({ userId, exchange: 'delta', isActive: true });
+        assertLiveTradingAllowed({ user, apiKey, config });
+
+        const historyDoc = await this._orderExecutor.execute(userId, {
             symbol:     signal.symbol.toUpperCase(),
             side:       signal.action === 'BUY' ? 'buy' : 'sell',
             size:       signal.quantity,
@@ -446,7 +463,7 @@ class AutomationEngine {
             const contractVal = parseFloat(spec?.contract_value || 1);
             const margin = (signal.quantity * (signal.entry || 1) * contractVal) / (signal.leverage || 10);
             await BotTrade.create({
-                userId: user._id,
+                userId,
                 mode: 'live',
                 symbol: signal.symbol.toUpperCase(),
                 direction: signal.action === 'BUY' ? 'long' : 'short',
@@ -791,8 +808,8 @@ class AutomationEngine {
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
-    async _loadPrefs() {
-        const prefs = await UserPreferences.findOne({}).sort({ updatedAt: -1 });
+    async _loadPrefs(userId = null) {
+        const prefs = await UserPreferences.findOne(userId ? { userId } : {}).sort({ updatedAt: -1 });
         return prefs || {};
     }
 
@@ -809,7 +826,14 @@ class AutomationEngine {
                 }
                 return pw?.available ?? null;
             }
-            // For live, we'd query exchange — return null to skip balance check if not available
+            if (mode === 'live' && prefs?.userId) {
+                const ExchangeService = require('../exchangeService');
+                const balances = await new ExchangeService(String(prefs.userId)).getBalances();
+                const usdt = (balances || []).find((b) => b.asset_symbol === 'USDT' || b.asset_symbol === 'USD');
+                if (!usdt) return null;
+                const available = parseFloat(usdt.available_balance ?? usdt.equity ?? usdt.balance);
+                return Number.isFinite(available) ? available : null;
+            }
             return null;
         } catch {
             return null;

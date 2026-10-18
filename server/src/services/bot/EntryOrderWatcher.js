@@ -160,6 +160,7 @@ class EntryOrderWatcher {
                 io:                     this.io,
                 orderId,
                 filledOrder:            orderData,
+                client,
                 reverseMode:            trade.reverseMode,
                 existingTradeId:        trade._id,  // update the pending_entry record in-place
             });
@@ -206,6 +207,7 @@ class EntryOrderWatcher {
                             io:                     this.io,
                             orderId,
                             filledOrder:            freshOrder.result,
+                            client,
                             reverseMode:            trade.reverseMode,
                             existingTradeId:        trade._id,
                         });
