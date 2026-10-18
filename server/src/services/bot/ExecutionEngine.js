@@ -109,6 +109,7 @@ class ExecutionEngine {
             orderType = 'market_order',
             reverseMode = false,
             strategyType = 'trend_pullback',
+            strategyMetadata = {},
             breakoutLevel = null,
         } = params;
 
@@ -177,6 +178,7 @@ class ExecutionEngine {
                     orderType,
                     reverseMode,
                     strategyType,
+                    strategyMetadata,
                     breakoutLevel,
                 });
             } else if (mode === 'live') {
@@ -201,6 +203,7 @@ class ExecutionEngine {
                     orderType,
                     reverseMode,
                     strategyType,
+                    strategyMetadata,
                     breakoutLevel,
                 });
             } else {
@@ -234,6 +237,8 @@ class ExecutionEngine {
             io,
             wsManager,
             orderType,
+            strategyType,
+            strategyMetadata,
         } = params;
 
         // Check PaperWallet has enough available margin
@@ -296,13 +301,14 @@ class ExecutionEngine {
                 walletBalanceAtEntry: walletBalanceAtEntry || wallet.balance,
                 effectiveBudgetAtEntry: effectiveBudgetAtEntry || Math.min(wallet.balance, 10),
                 reverseMode: Boolean(params.reverseMode),
-                strategyType: params.strategyType || 'trend_pullback',
+                strategyType: strategyType || 'trend_pullback',
+                strategyMetadata: strategyMetadata || {},
                 breakoutLevel: params.breakoutLevel || null,
             });
 
             await this._logEvent(userId, 'paper', 'ORDER_SUBMITTED', 'info',
                 `[Paper] Resting limit order placed for ${direction.toUpperCase()} ${quantity} ${symbol} @ $${entryPrice} (Live: $${livePrice}, awaiting pullback)`,
-                { tradeId: trade._id, symbol, direction, quantity, entryPrice, currentPrice: livePrice, orderType: 'limit_order' }
+                { tradeId: trade._id, symbol, direction, quantity, entryPrice, currentPrice: livePrice, orderType: 'limit_order', strategyType, strategyMetadata }
             );
 
             this._emit(io, userId, 'bot_trade_opened', {
@@ -416,7 +422,8 @@ class ExecutionEngine {
             liquidationPrice: liqPrice,
             source: 'automation',
             reverseMode: Boolean(params.reverseMode),
-            strategyType: params.strategyType || 'trend_pullback',
+            strategyType: strategyType || 'trend_pullback',
+            strategyMetadata: strategyMetadata || {},
             status: 'open',
         });
 
@@ -444,7 +451,8 @@ class ExecutionEngine {
             walletBalanceAtEntry: walletBalanceAtEntry || wallet.balance,
             effectiveBudgetAtEntry: effectiveBudgetAtEntry || Math.min(wallet.balance, 10),
             reverseMode: Boolean(params.reverseMode),
-            strategyType: params.strategyType || 'trend_pullback',
+            strategyType: strategyType || 'trend_pullback',
+            strategyMetadata: strategyMetadata || {},
             breakoutLevel: params.breakoutLevel || null,
         });
 
@@ -455,23 +463,23 @@ class ExecutionEngine {
         // 4. Log audit events
         await this._logEvent(userId, 'paper', 'ORDER_SUBMITTED', 'info',
             `[Paper] Submitted ${direction.toUpperCase()} ${quantity} ${symbol} @ $${fillPrice}`,
-            { tradeId: trade._id, symbol, direction, quantity, fillPrice, orderType }
+            { tradeId: trade._id, symbol, direction, quantity, fillPrice, orderType, strategyType, strategyMetadata }
         );
         await this._logEvent(userId, 'paper', 'ORDER_FILLED', 'info',
             `[Paper] Filled ${direction.toUpperCase()} ${quantity} ${symbol} @ $${fillPrice}`,
-            { tradeId: trade._id, fillPrice }
+            { tradeId: trade._id, fillPrice, strategyType, strategyMetadata }
         );
         await this._logEvent(userId, 'paper', 'TP_PLACED', 'info',
             `[Paper] Take profit target placed at $${takeProfit}`,
-            { tradeId: trade._id, takeProfit }
+            { tradeId: trade._id, takeProfit, strategyType, strategyMetadata }
         );
         await this._logEvent(userId, 'paper', 'SL_PLACED', 'info',
             `[Paper] Stop loss protection placed at $${stopLoss}`,
-            { tradeId: trade._id, stopLoss }
+            { tradeId: trade._id, stopLoss, strategyType, strategyMetadata }
         );
         await this._logEvent(userId, 'paper', 'POSITION_OPENED', 'info',
             `[Paper] Position opened: ${direction.toUpperCase()} ${quantity} ${symbol} (Margin: $${margin.toFixed(2)})`,
-            { tradeId: trade._id, positionId: position._id, margin, leverage }
+            { tradeId: trade._id, positionId: position._id, margin, leverage, strategyType, strategyMetadata }
         );
 
         // 5. Emit Socket.IO events
@@ -772,6 +780,7 @@ class ExecutionEngine {
             source: 'automation',
             reverseMode: Boolean(trade.reverseMode),
             strategyType: trade.strategyType || 'trend_pullback',
+            strategyMetadata: trade.strategyMetadata || {},
             status: 'open',
             tradeHistoryId: trade._id,
         });
@@ -786,19 +795,19 @@ class ExecutionEngine {
         // 3. Log audit events
         await this._logEvent(trade.userId, 'paper', 'ORDER_FILLED', 'info',
             `[Paper] Limit order filled on pullback for ${trade.direction.toUpperCase()} ${trade.quantity} ${trade.symbol} @ $${fillPrice}`,
-            { tradeId: trade._id, fillPrice }
+            { tradeId: trade._id, fillPrice, strategyType: trade.strategyType, strategyMetadata: trade.strategyMetadata }
         );
         await this._logEvent(trade.userId, 'paper', 'TP_PLACED', 'info',
             `[Paper] Take profit target placed at $${trade.takeProfit}`,
-            { tradeId: trade._id, takeProfit: trade.takeProfit }
+            { tradeId: trade._id, takeProfit: trade.takeProfit, strategyType: trade.strategyType, strategyMetadata: trade.strategyMetadata }
         );
         await this._logEvent(trade.userId, 'paper', 'SL_PLACED', 'info',
             `[Paper] Stop loss protection placed at $${trade.stopLoss}`,
-            { tradeId: trade._id, stopLoss: trade.stopLoss }
+            { tradeId: trade._id, stopLoss: trade.stopLoss, strategyType: trade.strategyType, strategyMetadata: trade.strategyMetadata }
         );
         await this._logEvent(trade.userId, 'paper', 'POSITION_OPENED', 'info',
             `[Paper] Position opened on pullback: ${trade.direction.toUpperCase()} ${trade.quantity} ${trade.symbol} @ $${fillPrice} (Margin: $${trade.margin.toFixed(2)})`,
-            { tradeId: trade._id, positionId: position._id, margin: trade.margin, leverage }
+            { tradeId: trade._id, positionId: position._id, margin: trade.margin, leverage, strategyType: trade.strategyType, strategyMetadata: trade.strategyMetadata }
         );
 
         // 4. Emit Socket.IO events

@@ -19,6 +19,7 @@ const ApiKey = require('../models/ApiKey');
 const User = require('../models/User');
 const config = require('../config/env');
 const { assertLiveTradingAllowed } = require('../services/trading/liveTradingGuard');
+const { REGIME_ENSEMBLE_V1 } = require('../services/bot/strategyTypes');
 const DeltaOrderClient = require('../services/trading/DeltaOrderClient');
 const { decryptData } = require('../utils/encryption');
 
@@ -43,6 +44,12 @@ router.get('/status', async (req, res) => {
             TradingConfig.findOne({ userId, mode: 'paper' }),
             TradingConfig.findOne({ userId, mode: 'live' }),
         ]);
+
+        if (paperCfg && paperCfg.strategyMigrationApplied !== true) {
+            paperCfg.strategyType = REGIME_ENSEMBLE_V1;
+            paperCfg.strategyMigrationApplied = true;
+            await paperCfg.save();
+        }
 
         res.json({
             paper: {
@@ -233,10 +240,19 @@ router.get('/config/:mode', async (req, res) => {
                 userId,
                 mode,
                 budgetUSDT: 10,
-                maxLeverage: 20,
+                maxLeverage: 5,
                 targetRoiPct: 5,
                 slAtrMultiplier: 1.5,
             });
+        }
+
+        // Migrate old paper configurations once so the UI and runtime stop
+        // silently defaulting to the legacy strategy. This does not alter live
+        // configurations and does not prevent a later explicit legacy choice.
+        if (mode === 'paper' && config.strategyMigrationApplied !== true) {
+            config.strategyType = REGIME_ENSEMBLE_V1;
+            config.strategyMigrationApplied = true;
+            await config.save();
         }
         res.json(config);
     } catch (err) {

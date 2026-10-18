@@ -7,6 +7,7 @@
  */
 
 const mongoose = require('mongoose');
+const { STRATEGY_TYPES, DEFAULT_STRATEGY_TYPE } = require('../services/bot/strategyTypes');
 
 const botSignalSchema = new mongoose.Schema(
     {
@@ -93,6 +94,10 @@ const botSignalSchema = new mongoose.Schema(
 
         // ── Strategy Direction Mode ─────────────────────────────────────────
         reverseMode: { type: Boolean, default: false },
+
+        // ── Strategy Audit Context ──────────────────────────────────────────
+        strategyType: { type: String, enum: STRATEGY_TYPES, default: DEFAULT_STRATEGY_TYPE },
+        strategyMetadata: { type: mongoose.Schema.Types.Mixed, default: {} },
     },
     {
         timestamps: true,

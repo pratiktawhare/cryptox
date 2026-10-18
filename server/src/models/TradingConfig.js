@@ -11,6 +11,10 @@
  */
 
 const mongoose = require('mongoose');
+const {
+    DEFAULT_STRATEGY_TYPE,
+    STRATEGY_TYPES,
+} = require('../services/bot/strategyTypes');
 
 const tradingConfigSchema = new mongoose.Schema(
     {
@@ -51,13 +55,13 @@ const tradingConfigSchema = new mongoose.Schema(
         // % of effectiveBudget risked per trade
         riskPerTradePct: {
             type: Number,
-            default: 5,
+            default: 1,
         },
 
         // % of effectiveBudget — stop opening new trades for the day
         maxDailyLossPct: {
             type: Number,
-            default: 10,
+            default: 5,
         },
 
         // Stop opening new trades after N consecutive losses
@@ -114,27 +118,35 @@ const tradingConfigSchema = new mongoose.Schema(
         },
 
         // Maximum leverage the bot is allowed to use
-        // Default: 20x margin
+        // Default: 5x margin for paper-first research
         maxLeverage: {
-            type: Number,
-            default: 20,
-        },
-
-        // Max simultaneous open positions (default 5 concurrent trades)
-        maxOpenPositions: {
             type: Number,
             default: 5,
         },
 
+        // Max simultaneous open positions (default 1 concurrent trade)
+        maxOpenPositions: {
+            type: Number,
+            default: 1,
+        },
+
         // ── Strategy Selection ──────────────────────────────────────────────
-        // 'trend_pullback'    = Buys pullbacks at EMA9 support during active trends (default)
+        // 'regime_ensemble_v1'= Paper-first regime selector (default)
+        // 'trend_pullback'    = Legacy EMA9 pullback strategy
         // 'breakout_straddle' = Arms dual tripwires around tight ranges, trades volatility expansion
         // 'radar_fleet'       = Event-driven multi-asset armada. Arms up to 15-20 coiled coins simultaneously
         // 'adaptive_hybrid'   = Auto-selects based on market regime (pullback on trends, radar fleet on squeeze)
         strategyType: {
             type: String,
-            enum: ['trend_pullback', 'breakout_straddle', 'radar_fleet', 'adaptive_hybrid'],
-            default: 'trend_pullback',
+            enum: STRATEGY_TYPES,
+            default: DEFAULT_STRATEGY_TYPE,
+        },
+        // Existing paper configurations are migrated once to the research
+        // default. Users can still explicitly choose a legacy strategy after
+        // migration for comparison.
+        strategyMigrationApplied: {
+            type: Boolean,
+            default: false,
         },
 
         // ── Breakout Straddle & Radar Fleet Parameters ───────────────────────

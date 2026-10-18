@@ -6,6 +6,7 @@ import { useTradingMode } from '../context/TradingModeContext';
 import { useSocket } from '../context/SocketContext';
 
 import BotHeader from '../components/bot/BotHeader';
+import BotStrategySafety from '../components/bot/BotStrategySafety';
 import BotStatsCards from '../components/bot/BotStatsCards';
 import BotActivePosition from '../components/bot/BotActivePosition';
 import BotEquityChart from '../components/bot/BotEquityChart';
@@ -599,7 +600,13 @@ export default function TradingBot() {
                     smartLossGuardLoading={smartLossGuardLoading}
                 />
 
-                {/* 2. Top Stats & Telemetry Grid */}
+                {/* 2. Active strategy and effective runtime safety */}
+                <BotStrategySafety
+                    status={currentModeStatus}
+                    mode={mode}
+                />
+
+                {/* 3. Top Stats & Telemetry Grid */}
                 <BotStatsCards
                     status={currentModeStatus}
                     performance={performance}
@@ -607,7 +614,7 @@ export default function TradingBot() {
                     mode={mode}
                 />
 
-                {/* 3. Real-Time Active Trade / Scanning Radar */}
+                {/* 4. Real-Time Active Trade / Scanning Radar */}
                 <BotActivePosition
                     trades={openTrades}
                     trade={openTrade}
@@ -625,14 +632,14 @@ export default function TradingBot() {
                     strategyType={currentModeStatus?.config?.strategyType}
                 />
 
-                {/* 4. Equity Performance Curve */}
+                {/* 5. Equity Performance Curve */}
                 <BotEquityChart
                     data={equityCurveData}
                     initialBalance={currentModeStatus?.config?.budgetUSDT || 10}
                     title={`${mode.toUpperCase()} Mode Live Account Equity`}
                 />
 
-                {/* 5. Tabbed Audit Console & Backtest Sandbox */}
+                {/* 6. Tabbed Audit Console & Backtest Sandbox */}
                 <BotAuditTabs
                     trades={trades}
                     signals={signals}

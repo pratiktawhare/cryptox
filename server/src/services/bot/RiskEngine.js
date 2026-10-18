@@ -21,6 +21,10 @@
 
 const { calcTradeCosts } = require('./CostEngine');
 
+function positive(value) {
+    return Number.isFinite(value) && value > 0;
+}
+
 /**
  * @param {object} params
  * @param {object} params.config                - TradingConfig document
@@ -32,6 +36,8 @@ const { calcTradeCosts } = require('./CostEngine');
  * @param {number} [params.spread]              - bid-ask spread (optional)
  * @param {number} [params.fundingRate]         - current funding rate (optional)
  * @param {object} [params.productSpec]         - product spec from ProductCatalog
+ * @param {object} [params.strategyGeometry]     - optional strategy-proposed
+ *                                                { entry, stopLoss, target }
  * @param {object} [params.dailyStats]          - { dailyLoss, consecutiveLosses }
  *
  * @returns {{
@@ -59,6 +65,7 @@ function calcRisk(params) {
         spread        = null,
         fundingRate   = null,
         productSpec   = null,
+        strategyGeometry = null,
         dailyStats    = null,
     } = params;
 
@@ -93,7 +100,7 @@ function calcRisk(params) {
     }
 
     // ── Step 2: Risk amount per trade ─────────────────────────────────────────
-    const riskPct = config.riskPerTradePct > 0 ? config.riskPerTradePct : 5;
+    const riskPct = config.riskPerTradePct > 0 ? config.riskPerTradePct : 1;
     const effectiveBudget = Math.min(budgetUSDT, actualAvailableBalance);
     const riskAmt = effectiveBudget * (riskPct / 100);
 
@@ -170,13 +177,23 @@ function calcRisk(params) {
     const slMultiplier = config.slAtrMultiplier > 0 ? config.slAtrMultiplier : 1.5;
     const maxSafeSlDistance = entryPrice * ((1 / leverage) * 0.85);
     const minSafeSlDistance = Math.max(atr * 0.5, entryPrice * 0.002);
-    let slDistance = Math.min(atr * slMultiplier, maxSafeSlDistance);
+    const proposedStopDistance = strategyGeometry?.stopLoss
+        ? Math.abs(entryPrice - Number(strategyGeometry.stopLoss))
+        : null;
+    const proposedTargetDistance = strategyGeometry?.target
+        ? Math.abs(Number(strategyGeometry.target) - entryPrice)
+        : null;
+    let slDistance = Math.min(
+        positive(proposedStopDistance) ? proposedStopDistance : atr * slMultiplier,
+        maxSafeSlDistance
+    );
     slDistance = Math.max(slDistance, Math.min(minSafeSlDistance, maxSafeSlDistance));
 
     // Required target distance clears costs, the configured ROI objective, and
     // the configured minimum net R:R against the ATR-derived stop.
     const requiredTpDist = Math.max(
         roiPriceDist + cost.breakEvenAbs,
+        positive(proposedTargetDistance) ? proposedTargetDistance : 0,
         slDistance * minRR + cost.breakEvenAbs * (minRR + 1),
         cost.breakEvenAbs * (config.tpSafetyMultiplier || 1.5),
         entryPrice * 0.002 // at least 0.2% move to safely clear spread

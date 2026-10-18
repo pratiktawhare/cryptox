@@ -22,9 +22,10 @@ const { calcATR, calcATRPercent } = require('./indicators/atr');
 const { calcVolumeRatio } = require('./indicators/volume');
 const { calcMomentum } = require('./indicators/momentum');
 const { detectRegime } = require('./RegimeDetector');
-const { scoreSignal } = require('./SignalScorer');
 const { calcRisk, checkDailyLimits } = require('./RiskEngine');
 const { FEES } = require('./CostEngine');
+const { selectStrategy } = require('./strategySelector');
+const { DEFAULT_STRATEGY_TYPE } = require('./strategyTypes');
 
 class BacktestEngine {
     /**
@@ -65,7 +66,7 @@ class BacktestEngine {
         // Configuration with sensible defaults
         const stratConfig = {
             budgetUSDT: startBalance,
-            riskPerTradePct: 5,
+            riskPerTradePct: 1,
             targetRoiPct: 5,
             maxDailyLossPct: 10,
             maxConsecutiveLosses: 3,
@@ -74,8 +75,9 @@ class BacktestEngine {
             minSignalScore: 5,
             slAtrMultiplier: 1.5,
             tpSafetyMultiplier: 2.0,
-            maxLeverage: 20,
+            maxLeverage: 5,
             maxOpenPositions: 1,
+            strategyType: DEFAULT_STRATEGY_TYPE,
             // Conservative execution assumptions. Callers can override these
             // for exchange-specific fee tiers and measured market quality.
             entryFeeRate: FEES.MAKER_RATE,
@@ -197,6 +199,9 @@ class BacktestEngine {
                         fees: parseFloat(totalFees.toFixed(4)),
                         fundingCost: parseFloat(fundingCost.toFixed(4)),
                         slippage: parseFloat((openPosition.entrySlippage + slip * openPosition.quantity * contractValue).toFixed(4)),
+                        strategyType: openPosition.strategyType,
+                        strategyMetadata: openPosition.strategyMetadata,
+                        regime: openPosition.regime,
                         netPnl: parseFloat(netPnl.toFixed(4)),
                         result: isWin ? 'win' : 'loss',
                         exitReason,
@@ -266,7 +271,15 @@ class BacktestEngine {
                 };
 
                 const regimeResult = detectRegime(snapshot);
-                const scoreResult = scoreSignal(snapshot, regimeResult, stratConfig.minSignalScore);
+                const strategyResult = selectStrategy({
+                    strategyType: stratConfig.strategyType || DEFAULT_STRATEGY_TYPE,
+                    snapshot,
+                    config: stratConfig,
+                    regimeResult,
+                    candles: window,
+                    now: candle.time * 1000,
+                });
+                const scoreResult = strategyResult.scoreResult;
 
                 if (scoreResult.decision === 'TRADE' && scoreResult.score >= stratConfig.minSignalScore) {
                     // Next candle open simulates realistic execution without lookahead bias
@@ -290,6 +303,7 @@ class BacktestEngine {
                         spread: snapshot.spread,
                         fundingRate: snapshot.fundingRate,
                         productSpec,
+                        strategyGeometry: scoreResult.geometry,
                         dailyStats,
                     });
 
@@ -310,6 +324,9 @@ class BacktestEngine {
                             entryNotional,
                             entrySlippage: entrySlip * riskResult.qty * contractValue,
                             reverseMode: Boolean(stratConfig.reverseMode),
+                            strategyType: stratConfig.strategyType || DEFAULT_STRATEGY_TYPE,
+                            strategyMetadata: strategyResult.strategyMetadata || {},
+                            regime: strategyResult.regimeResult?.regime || null,
                         };
                     }
                 }
@@ -373,6 +390,9 @@ class BacktestEngine {
                 fees: parseFloat(fees.toFixed(4)),
                 fundingCost: parseFloat(fundingCost.toFixed(4)),
                 slippage: parseFloat((openPosition.entrySlippage + slip * openPosition.quantity * contractValue).toFixed(4)),
+                strategyType: openPosition.strategyType,
+                strategyMetadata: openPosition.strategyMetadata,
+                regime: openPosition.regime,
                 netPnl: parseFloat(netPnl.toFixed(4)),
                 result: netPnl >= 0 ? 'win' : 'loss',
                 exitReason: 'end_of_test',
@@ -411,6 +431,7 @@ class BacktestEngine {
 
         return {
             symbol,
+            strategyType: stratConfig.strategyType || DEFAULT_STRATEGY_TYPE,
             from: new Date(startTs * 1000).toISOString(),
             to: new Date(endTs * 1000).toISOString(),
             candleCount: candles.length,

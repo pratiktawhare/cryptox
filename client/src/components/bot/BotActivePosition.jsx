@@ -354,6 +354,11 @@ export default function BotActivePosition({
     strategyType = 'radar_fleet',
 }) {
     const navigate = useNavigate();
+    const strategyLabel = strategyType === 'breakout_straddle'
+        ? 'Active Breakout Straddle'
+        : strategyType === 'regime_ensemble_v1'
+            ? 'Active Regime Ensemble v1'
+            : 'Active Radar Fleet';
 
     const activeTrades = (Array.isArray(trades) && trades.length > 0)
         ? trades.filter(t => t && (t.result === 'open' || t.result === 'pending_entry'))
@@ -368,7 +373,7 @@ export default function BotActivePosition({
                     <div className="space-y-3">
                         <div className="flex items-center justify-between px-1">
                             <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
-                                <span>📡</span> {strategyType === 'breakout_straddle' ? 'Active Breakout Straddle' : 'Active Radar Fleet'} ({armedTripwires.length} Coiled {armedTripwires.length === 1 ? 'Coin' : 'Coins'} Watching)
+                                <span>📡</span> {strategyLabel} ({armedTripwires.length} Coiled {armedTripwires.length === 1 ? 'Coin' : 'Coins'} Watching)
                             </span>
                             <span className="text-[10px] text-crypto-muted font-medium">Sub-Second WebSocket Breaches</span>
                         </div>

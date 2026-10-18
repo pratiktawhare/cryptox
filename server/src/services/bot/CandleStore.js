@@ -154,6 +154,21 @@ class CandleStore extends EventEmitter {
     }
 
     /**
+     * Return only candles whose interval has fully elapsed. The WebSocket
+     * updates the current candle in place, so strategy evaluation must not
+     * consume that partial bar as if it were historical data.
+     */
+    getCompletedCandles(symbol, timeframe, count = 50, now = Date.now()) {
+        const intervalMs = timeframe === '1m' ? 60_000 : timeframe === '5m' ? 300_000 : 0;
+        if (!intervalMs) return this.getCandles(symbol, timeframe, count);
+        const completed = this.getCandles(symbol, timeframe, count + 1).filter((candle) => {
+            const timestampMs = candle.time < 1e11 ? candle.time * 1000 : candle.time;
+            return timestampMs + intervalMs <= now;
+        });
+        return completed.slice(-count);
+    }
+
+    /**
      * Seed an array of historical candles into the store.
      * @param {string} symbol
      * @param {'1m'|'5m'} resolution

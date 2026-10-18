@@ -91,6 +91,23 @@ second user taking ownership of an active mode.
 10. Scoped each running `TradingBot` instance to the authenticated owner so
     starting one user's bot cannot scan every enabled user's configuration.
 
+## New strategy added: `regime_ensemble_v1`
+
+The old entry strategies are still available for comparison, but paper
+configurations now migrate to a new deterministic regime ensemble. It uses
+completed 5-minute candles and selects among:
+
+- confirmed-volume volatility breakouts after compression;
+- trend pullbacks only when EMA, slope, ADX/DI, price location, and RSI agree;
+- range-edge mean reversion only in non-trending markets with RSI and candle
+  reversal confirmation.
+
+The pure evaluator rejects stale/incomplete/illiquid data and returns explicit
+reasons. Its proposed 1.5 ATR stop and 2.25 ATR target are passed through the
+shared RiskEngine, which still enforces costs, minimum net R:R, and dollar-risk
+position sizing. The strategy is paper-first and new live entries are blocked.
+Detailed rules are in `STRATEGY_REGIME_ENSEMBLE_V1.md`.
+
 ## What is still not proven
 
 The changes above improve safety and measurement; they do **not** prove that

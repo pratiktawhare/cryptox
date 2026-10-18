@@ -29,9 +29,13 @@ const { decryptData } = require('../../utils/encryption');
 const candleStore = require('./CandleStore');
 const { analyzeSymbol } = require('./MarketAnalyzer');
 const { detectRegime } = require('./RegimeDetector');
-const { scoreSignal } = require('./SignalScorer');
 const { filterAffordable } = require('./AffordabilityFilter');
 const { calcRisk, checkDailyLimits } = require('./RiskEngine');
+const { selectStrategy } = require('./strategySelector');
+const {
+    DEFAULT_STRATEGY_TYPE,
+    REGIME_ENSEMBLE_V1,
+} = require('./strategyTypes');
 const executionEngine = require('./ExecutionEngine');
 const positionMonitor = require('./PositionMonitor');
 const entryOrderWatcher = require('./EntryOrderWatcher');
@@ -286,6 +290,34 @@ class TradingBot {
 
     async _scanForUser(config) {
         const userId = config.userId;
+        if (this.mode === 'paper' && config.strategyMigrationApplied !== true) {
+            config.strategyType = REGIME_ENSEMBLE_V1;
+            config.strategyMigrationApplied = true;
+            await config.save();
+        }
+        const strategyType = config.strategyType || DEFAULT_STRATEGY_TYPE;
+
+        // Regime Ensemble v1 is a paper-forward research strategy. Keep its
+        // selector out of the live execution path until it is explicitly
+        // promoted; reduce-only live safety actions remain elsewhere.
+        if (this.mode === 'live' && strategyType === REGIME_ENSEMBLE_V1) {
+            const reason = 'regime_ensemble_v1 is paper-only; live entries are disabled';
+            await this._logEvent(userId, 'TRADE_REJECTED', 'warn', reason, {
+                strategyType,
+                liveEntryDisabled: true,
+            });
+            await this._recordSignal({
+                userId,
+                symbol: 'LIVE_STRATEGY_GATE',
+                direction: null,
+                score: 0,
+                decision: 'REJECT',
+                rejectReason: reason,
+                strategyType,
+                strategyMetadata: { liveEntryDisabled: true },
+            });
+            return;
+        }
 
         // ── 0. Open Positions Safety & Drop-off Evaluation ──────────────────
         await this._scanOpenPositionsForRescue(userId, config);
@@ -432,6 +464,7 @@ class TradingBot {
                 effectiveBudget: config.budgetUSDT,
                 affordableSymbols: 0,
                 totalScanned: 0,
+                strategyType,
             });
             return;
         }
@@ -462,6 +495,7 @@ class TradingBot {
                 effectiveBudget: config.budgetUSDT,
                 affordableSymbols: 0,
                 totalScanned: 0,
+                strategyType,
             });
             return;
         }
@@ -509,6 +543,7 @@ class TradingBot {
                 effectiveBudget,
                 affordableSymbols: 0,
                 totalScanned: allSymbols.length,
+                strategyType,
             });
             return;
         }
@@ -532,9 +567,6 @@ class TradingBot {
         }
 
         console.log(`[TradingBot] Budget $${effectiveBudget.toFixed(2)}: Filtered ${allSymbols.length} coins down to ${unheldAffordable.length} available candidates (excluding ${openSymbols.size} open): ${unheldAffordable.slice(0, 5).join(', ')}...`);
-
-        // ── Strategy Mode Branching ──────────────────────────────────────────
-        const strategyType = config.strategyType || 'trend_pullback';
 
         if (strategyType === 'radar_fleet' || strategyType === 'breakout_straddle') {
             const isFleet = strategyType === 'radar_fleet';
@@ -571,13 +603,22 @@ class TradingBot {
                 if (!snapshot) continue;
 
                 const regimeResult = detectRegime(snapshot);
-                const scoreResult = scoreSignal(snapshot, regimeResult, config.minSignalScore, groqResult);
+                const strategyResult = selectStrategy({
+                    strategyType,
+                    snapshot,
+                    config,
+                    groqResult,
+                    regimeResult,
+                    candles: candleStore.getCompletedCandles(symbol, '5m', 100, Date.now()),
+                    now: Date.now(),
+                });
 
                 candidates.push({
                     symbol,
                     snapshot,
-                    regimeResult,
-                    scoreResult,
+                    regimeResult: strategyResult.regimeResult,
+                    scoreResult: strategyResult.scoreResult,
+                    strategyMetadata: strategyResult.strategyMetadata,
                     groqResult,
                 });
             } catch (symErr) {
@@ -654,6 +695,8 @@ class TradingBot {
                 effectiveBudget,
                 affordableSymbols: affordableSymbols.length,
                 totalScanned: allSymbols.length,
+                strategyType,
+                strategyMetadata: best.strategyMetadata,
             });
 
             // Also record up to 2 other notable scored candidates so the log table shows evaluated market context
@@ -677,6 +720,8 @@ class TradingBot {
                         effectiveBudget,
                         affordableSymbols: affordableSymbols.length,
                         totalScanned: allSymbols.length,
+                        strategyType,
+                        strategyMetadata: other.strategyMetadata,
                     });
                 }
             }
@@ -696,7 +741,9 @@ class TradingBot {
 
         // ── 6. Risk Engine & Cost Validation ──────────────────────────────────
         let tradeDirection = best.scoreResult.direction;
-        const isReverse = config.reverseMode === true;
+        const isReverse = strategyType === REGIME_ENSEMBLE_V1
+            ? false
+            : config.reverseMode === true;
         if (isReverse) {
             tradeDirection = tradeDirection === 'long' ? 'short' : 'long';
             console.log(`[TradingBot] 🔄 REVERSE MODE ACTIVE: Inverting signal ${best.scoreResult.direction?.toUpperCase()} → ${tradeDirection.toUpperCase()} on ${best.symbol} (fading rally/dump)`);
@@ -740,6 +787,16 @@ class TradingBot {
             }
         }
 
+        const ensembleGeometry = strategyType === REGIME_ENSEMBLE_V1
+            ? best.scoreResult.geometry
+            : null;
+        if (ensembleGeometry?.entry && Number.isFinite(Number(ensembleGeometry.entry))) {
+            // The ensemble is evaluated on a completed candle and proposes its
+            // own next-fill anchor. Do not replace a breakout/range entry with
+            // the legacy EMA pullback anchor.
+            smartEntryPrice = Number(ensembleGeometry.entry);
+        }
+
         smartEntryPrice = roundToTick(smartEntryPrice, tickSize);
         const adjPct = (Math.abs(currentLivePrice - smartEntryPrice) / currentLivePrice * 100).toFixed(3);
         console.log(`[TradingBot] 📐 Institutional Pullback Entry on ${best.symbol}: live=$${currentLivePrice.toFixed(4)} → limit entry=$${smartEntryPrice.toFixed(4)} (${adjPct}% discount @ dynamic support)`);
@@ -754,6 +811,7 @@ class TradingBot {
             spread: best.snapshot.spread,
             fundingRate: best.snapshot.fundingRate,
             productSpec: this.productCatalog.getBySymbol(best.symbol),
+            strategyGeometry: ensembleGeometry,
             dailyStats,
         });
 
@@ -777,10 +835,13 @@ class TradingBot {
                 affordableSymbols: affordableSymbols.length,
                 totalScanned: allSymbols.length,
                 reverseMode: isReverse,
+                strategyType,
+                strategyMetadata: best.strategyMetadata,
             });
 
             await this._logEvent(userId, 'TRADE_REJECTED', 'warn',
-                `Signal on ${best.symbol} (${isReverse ? 'REVERSED ' : ''}${tradeDirection.toUpperCase()}) rejected by risk engine: ${riskResult.reason}`
+                `Signal [${strategyType}] on ${best.symbol} (${isReverse ? 'REVERSED ' : ''}${tradeDirection.toUpperCase()}) rejected by risk engine: ${riskResult.reason}`,
+                { strategyType, strategyMetadata: best.strategyMetadata, reason: riskResult.reason }
             );
             return;
         }
@@ -810,6 +871,8 @@ class TradingBot {
             wsManager: this.wsManager,
             reverseMode: isReverse,
             orderType: 'limit_order',
+            strategyType,
+            strategyMetadata: best.strategyMetadata,
         });
 
         // Record successful trade signal
@@ -832,11 +895,14 @@ class TradingBot {
             totalScanned: allSymbols.length,
             botTradeId: execResult.trade?._id || null,
             reverseMode: isReverse,
+            strategyType,
+            strategyMetadata: best.strategyMetadata,
         });
 
         if (execResult.success) {
             await this._logEvent(userId, 'SIGNAL_GENERATED', 'info',
-                `TradingBot executed ${best.scoreResult.direction.toUpperCase()} ${best.symbol} with score ${best.scoreResult.score}/8`
+                `TradingBot [${strategyType}] executed ${best.scoreResult.direction.toUpperCase()} ${best.symbol} with score ${best.scoreResult.score}/8`,
+                { strategyType, strategyMetadata: best.strategyMetadata }
             );
         }
     }
@@ -880,6 +946,7 @@ class TradingBot {
                 effectiveBudget,
                 affordableSymbols: affordableSymbols.length,
                 totalScanned: allSymbols.length,
+                strategyType: config.strategyType || DEFAULT_STRATEGY_TYPE,
             });
             await this._logEvent(userId, 'NO_SIGNAL_FOUND', 'info',
                 `${modeLabel} scan completed. No coins in squeeze among ${coinsToScan.length} candidates.`
@@ -984,6 +1051,7 @@ class TradingBot {
                 fleetArmedCount: armedTotal,
                 newlyArmed: toArm.map(t => t.symbol),
             },
+            strategyType: config.strategyType || DEFAULT_STRATEGY_TYPE,
         });
     }
 
@@ -1029,6 +1097,8 @@ class TradingBot {
                 totalScanned: data.totalScanned,
                 botTradeId: data.botTradeId,
                 reverseMode: data.reverseMode || false,
+                strategyType: data.strategyType || DEFAULT_STRATEGY_TYPE,
+                strategyMetadata: data.strategyMetadata || data.metadata || {},
             });
 
             if (this.io) {

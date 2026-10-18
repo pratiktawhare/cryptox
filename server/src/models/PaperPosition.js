@@ -5,6 +5,7 @@
  * Created when a paper order is "filled", closed when SL/TP is hit or user closes manually.
  */
 const mongoose = require('mongoose');
+const { STRATEGY_TYPES, DEFAULT_STRATEGY_TYPE } = require('../services/bot/strategyTypes');
 
 const paperPositionSchema = new mongoose.Schema({
     userId:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
@@ -40,7 +41,8 @@ const paperPositionSchema = new mongoose.Schema({
     tradeHistoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'TradeHistory', default: null },
     source:     { type: String, enum: ['manual', 'signal', 'automation'], default: 'manual' },
     reverseMode: { type: Boolean, default: false },
-    strategyType: { type: String, enum: ['trend_pullback', 'breakout_straddle', 'radar_fleet', 'adaptive_hybrid'], default: 'trend_pullback' },
+    strategyType: { type: String, enum: STRATEGY_TYPES, default: DEFAULT_STRATEGY_TYPE },
+    strategyMetadata: { type: mongoose.Schema.Types.Mixed, default: {} },
 
 }, { timestamps: true });
 

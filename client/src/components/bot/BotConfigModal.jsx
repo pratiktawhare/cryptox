@@ -6,22 +6,22 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
     const [resetWalletBalance, setResetWalletBalance] = useState('10');
     const [resettingWallet, setResettingWallet] = useState(false);
     const [resetSuccessMsg, setResetSuccessMsg] = useState('');
-    const [leverage, setLeverage] = useState(config.maxLeverage ?? 20);
+    const [leverage, setLeverage] = useState(config.maxLeverage ?? 5);
     const [targetRoiPct, setTargetRoiPct] = useState(config.targetRoiPct ?? 5);
-    const [maxOpenPositions, setMaxOpenPositions] = useState(config.maxOpenPositions ?? 5);
-    const [riskPerTrade, setRiskPerTrade] = useState(config.riskPerTradePct ?? 5);
-    const [maxDailyLoss, setMaxDailyLoss] = useState(config.maxDailyLossPct ?? 10);
+    const [maxOpenPositions, setMaxOpenPositions] = useState(config.maxOpenPositions ?? 1);
+    const [riskPerTrade, setRiskPerTrade] = useState(config.riskPerTradePct ?? 1);
+    const [maxDailyLoss, setMaxDailyLoss] = useState(config.maxDailyLossPct ?? 5);
     const [maxConsecutiveLosses, setMaxConsecutiveLosses] = useState(config.maxConsecutiveLosses ?? 3);
     const [minSignalScore, setMinSignalScore] = useState(config.minSignalScore ?? (mode === 'live' ? 6 : 5));
-    const [minRewardRisk, setMinRewardRisk] = useState(config.minRewardRisk ?? 0.05);
-    const [slAtrMultiplier, setSlAtrMultiplier] = useState(config.slAtrMultiplier ?? 5.0);
+    const [minRewardRisk, setMinRewardRisk] = useState(config.minRewardRisk ?? 1.0);
+    const [slAtrMultiplier, setSlAtrMultiplier] = useState(config.slAtrMultiplier ?? 1.5);
     const [cooldownSeconds, setCooldownSeconds] = useState(config.cooldownSeconds ?? 60);
     const [scanIntervalMinutes, setScanIntervalMinutes] = useState(config.scanIntervalMinutes ?? 5);
     const [aiEnabled, setAiEnabled] = useState(config.aiEnabled ?? true);
     const [aiIntervalSeconds, setAiIntervalSeconds] = useState(config.aiIntervalSeconds ?? 1800);
     const [walletParts, setWalletParts] = useState(config.walletParts ?? 1);
     const [smartGuard, setSmartGuard] = useState(config.smartLossGuard ?? false);
-    const [strategyType, setStrategyType] = useState(config.strategyType ?? 'trend_pullback');
+    const [strategyType, setStrategyType] = useState(config.strategyType ?? 'regime_ensemble_v1');
     const [breakoutSqueezeBars, setBreakoutSqueezeBars] = useState(config.breakoutSqueezeBars ?? 2);
     const [breakoutKcMultiplier, setBreakoutKcMultiplier] = useState(config.breakoutKcMultiplier ?? 2.0);
     const [breakoutMaxBandwidth, setBreakoutMaxBandwidth] = useState(config.breakoutMaxBandwidth ?? 0.015);
@@ -38,22 +38,22 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
     useEffect(() => {
         if (config) {
             setBudget(String(config.budgetUSDT ?? 10));
-            setLeverage(config.maxLeverage ?? 20);
+            setLeverage(config.maxLeverage ?? 5);
             setTargetRoiPct(config.targetRoiPct ?? 5);
-            setMaxOpenPositions(config.maxOpenPositions ?? 5);
-            setRiskPerTrade(config.riskPerTradePct ?? 5);
-            setMaxDailyLoss(config.maxDailyLossPct ?? 10);
+            setMaxOpenPositions(config.maxOpenPositions ?? 1);
+            setRiskPerTrade(config.riskPerTradePct ?? 1);
+            setMaxDailyLoss(config.maxDailyLossPct ?? 5);
             setMaxConsecutiveLosses(config.maxConsecutiveLosses ?? 3);
             setMinSignalScore(config.minSignalScore ?? (mode === 'live' ? 6 : 5));
-            setMinRewardRisk(config.minRewardRisk ?? 0.05);
-            setSlAtrMultiplier(config.slAtrMultiplier ?? 5.0);
+            setMinRewardRisk(config.minRewardRisk ?? 1.0);
+            setSlAtrMultiplier(config.slAtrMultiplier ?? 1.5);
             setCooldownSeconds(config.cooldownSeconds ?? 60);
             setScanIntervalMinutes(config.scanIntervalMinutes ?? 5);
             setAiEnabled(config.aiEnabled ?? true);
             setAiIntervalSeconds(config.aiIntervalSeconds ?? 1800);
             setWalletParts(config.walletParts ?? 1);
             setSmartGuard(config.smartLossGuard ?? false);
-            setStrategyType(config.strategyType ?? 'trend_pullback');
+            setStrategyType(config.strategyType ?? 'regime_ensemble_v1');
             setBreakoutSqueezeBars(config.breakoutSqueezeBars ?? 2);
             setBreakoutKcMultiplier(config.breakoutKcMultiplier ?? 2.0);
             setBreakoutMaxBandwidth(config.breakoutMaxBandwidth ?? 0.015);
@@ -118,22 +118,22 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
 
     const handleResetDefaults = () => {
         setBudget('10');
-        setLeverage(20);
+        setLeverage(5);
         setTargetRoiPct(5);
-        setMaxOpenPositions(5);
-        setRiskPerTrade(5);
-        setMaxDailyLoss(10);
+        setMaxOpenPositions(1);
+        setRiskPerTrade(1);
+        setMaxDailyLoss(5);
         setMaxConsecutiveLosses(3);
         setMinSignalScore(mode === 'live' ? 6 : 5);
-        setMinRewardRisk(0.05);
-        setSlAtrMultiplier(5.0);
+        setMinRewardRisk(1.0);
+        setSlAtrMultiplier(1.5);
         setCooldownSeconds(60);
         setScanIntervalMinutes(5);
         setAiEnabled(true);
         setAiIntervalSeconds(1800);
         setWalletParts(1);
         setSmartGuard(false);
-        setStrategyType('trend_pullback');
+        setStrategyType('regime_ensemble_v1');
         setBreakoutSqueezeBars(2);
         setBreakoutKcMultiplier(2.0);
         setBreakoutMaxBandwidth(0.015);
@@ -684,7 +684,7 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                                 {
                                     id: 'trend_pullback',
                                     title: 'Trend Pullback',
-                                    badge: 'Default',
+                                    badge: 'Legacy',
                                     icon: '📈',
                                     desc: 'Dynamic EMA9 limit discount entry on trending coins.',
                                 },
@@ -708,6 +708,13 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                                     badge: 'Smart Dual',
                                     icon: '🔀',
                                     desc: 'Rides trend pullbacks; auto-deploys Radar Fleet if market is compressing.',
+                                },
+                                {
+                                    id: 'regime_ensemble_v1',
+                                    title: 'Regime Ensemble v1',
+                                    badge: 'Paper default · Research',
+                                    icon: '🧪',
+                                    desc: 'Research ensemble for regime-aware paper-forward evaluation. Live entry is disabled.',
                                 },
                             ].map(st => (
                                 <button
@@ -741,6 +748,20 @@ export default function BotConfigModal({ isOpen, onClose, config = {}, mode = 'p
                                 </button>
                             ))}
                         </div>
+
+                        {strategyType === 'regime_ensemble_v1' && (
+                            <div className="p-4 bg-amber-500/10 border border-amber-500/25 rounded-2xl flex items-start gap-3">
+                                <div className="w-8 h-8 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center flex-shrink-0">
+                                    🧪
+                                </div>
+                                <div>
+                                    <p className="text-xs font-black text-amber-300">Paper-first research strategy</p>
+                                    <p className="text-[11px] text-crypto-muted mt-1 leading-relaxed">
+                                        Regime Ensemble v1 is intended for paper-forward validation. New live entries remain disabled while this strategy is selected; use the effective safety summary on the bot screen to review the applied limits.
+                                    </p>
+                                </div>
+                            </div>
+                        )}
 
                         {/* Breakout Straddle & Radar Fleet Parameters Box */}
                         {(strategyType === 'radar_fleet' || strategyType === 'breakout_straddle' || strategyType === 'adaptive_hybrid') && (
