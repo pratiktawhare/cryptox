@@ -24,9 +24,11 @@ const tradingRoutes       = require('./routes/trading');
 const paperRoutes         = require('./routes/paper');
 const analyticsRoutes     = require('./routes/analytics');
 const notificationRoutes  = require('./routes/notifications');
+const scannerRoutes       = require('./routes/scanner');
 const signalEngine        = require('./services/ai/SignalEngine');
 const signalTracker       = require('./services/ai/SignalTracker');
 const automationEngine    = require('./services/ai/AutomationEngine');
+const scannerScheduler    = require('./services/custom_strategy/ScannerScheduler');
 const positionTracker     = require('./services/trading/PositionTracker');
 const paperEngine         = require('./services/trading/PaperTradingEngine');
 const orderExecutor       = require('./services/trading/OrderExecutor');
@@ -70,6 +72,7 @@ app.use('/api/analytics',     analyticsRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/automation',    require('./routes/automation'));
 app.use('/api/bot',           require('./routes/bot'));
+app.use('/api/scanner',       scannerRoutes);
 
 const healthHandler = (_req, res) => {
     res.json({
@@ -168,6 +171,10 @@ async function start() {
     // 8.5. Start EntryOrderWatcher — constantly monitor and timeout unfilled limit entry orders (15 min)
     entryOrderWatcher.start(io, wsManager);
 
+    // 8.8. Start MCdynamic Universal Scanner Scheduler (defaults to 4H interval/on-demand)
+    scannerScheduler.start(io);
+    app.set('scannerScheduler', scannerScheduler);
+
     // 9. Daily summary cron — fires at midnight every day
     cron.schedule('0 0 * * *', async () => {
         try {
@@ -215,6 +222,7 @@ function shutdown(signal) {
     paperBot.stop();
     liveBot.stop();
     entryOrderWatcher.stop();
+    scannerScheduler.stop();
     positionTracker.stop();
     paperEngine.stop();
     productCatalog.destroy();

@@ -12,6 +12,7 @@ import Signals from './pages/Signals';
 import Positions from './pages/Positions';
 import Analytics from './pages/Analytics';
 import TradingBot from './pages/TradingBot';
+import UniversalScanner from './pages/UniversalScanner';
 
 function ProtectedRoute({ children }) {
     const { user, loading, isInitialized } = useAuth();
@@ -97,6 +98,14 @@ function AppRoutes() {
                 element={
                     <ProtectedRoute>
                         <TradingBot />
+                    </ProtectedRoute>
+                }
+            />
+            <Route
+                path="/scanner"
+                element={
+                    <ProtectedRoute>
+                        <UniversalScanner />
                     </ProtectedRoute>
                 }
             />

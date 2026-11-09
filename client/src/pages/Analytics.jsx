@@ -347,6 +347,13 @@ export default function Analytics() {
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                             </svg>
                         </button>
+                        <button
+                            type="button"
+                            onClick={() => navigate('/scanner')}
+                            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-crypto-accent/10 border border-crypto-accent/20 text-xs font-bold text-crypto-accent hover:bg-crypto-accent/20 transition-all cursor-pointer"
+                        >
+                            MC Scanner
+                        </button>
                         <NotificationBell />
                     </div>
                 </div>

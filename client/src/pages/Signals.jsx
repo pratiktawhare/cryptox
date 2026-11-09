@@ -425,6 +425,13 @@ const Signals = () => {
                                 </>
                             ) : '⚡ Scan'}
                         </button>
+                        <button
+                            type="button"
+                            onClick={() => navigate('/scanner')}
+                            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-crypto-accent/10 border border-crypto-accent/20 text-xs font-bold text-crypto-accent hover:bg-crypto-accent/20 transition-all cursor-pointer"
+                        >
+                            MC Scanner
+                        </button>
                         <NotificationBell />
                     </div>
                 </div>

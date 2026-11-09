@@ -1080,6 +1080,13 @@ const Positions = () => {
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
               <span className="hidden sm:inline">New Order</span>
             </button>
+            <button
+                type="button"
+                onClick={() => navigate('/scanner')}
+                className="hidden sm:flex items-center gap-1.5 px-3 py-2 bg-crypto-accent/10 border border-crypto-accent/25 text-crypto-accent rounded-xl text-sm font-bold hover:bg-crypto-accent/20 transition-all cursor-pointer"
+            >
+                MC Scanner
+            </button>
             <NotificationBell />
           </div>
         </div>

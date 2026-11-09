@@ -41,7 +41,7 @@ function getDecisionBadge(decision) {
             };
         case 'SKIPPED_COOLDOWN':
             return {
-                label: '⏳ SAFETY COOLDOWN',
+                label: '🛑 SAFETY GATE',
                 style: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
                 dot: 'bg-amber-400',
             };
@@ -492,7 +492,7 @@ export default function BotAuditTabs({
                                                                 <div className="text-[10px] font-bold uppercase tracking-wider text-crypto-muted mb-1.5">
                                                                     Market & Account Context Snapshot
                                                                 </div>
-                                                                <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-center">
+                                                                 <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 text-center">
                                                                     <div className="bg-crypto-card border border-crypto-border/60 rounded-lg p-2">
                                                                         <div className="text-[9px] text-crypto-muted">5m RSI</div>
                                                                         <div className="text-xs font-bold text-crypto-heading font-mono">
@@ -524,11 +524,17 @@ export default function BotAuditTabs({
                                                                         </div>
                                                                     </div>
                                                                     <div className="bg-crypto-card border border-crypto-border/60 rounded-lg p-2">
-                                                                        <div className="text-[9px] text-crypto-muted">Wallet / Budget</div>
-                                                                        <div className="text-xs font-bold text-crypto-heading font-mono">
-                                                                            {sig.walletBalance != null ? `$${sig.walletBalance.toFixed(2)}` : '—'}
-                                                                        </div>
-                                                                    </div>
+                                                                         <div className="text-[9px] text-crypto-muted">Available Wallet</div>
+                                                                         <div className="text-xs font-bold text-crypto-heading font-mono">
+                                                                             {sig.walletBalance != null ? `$${sig.walletBalance.toFixed(2)}` : '—'}
+                                                                         </div>
+                                                                     </div>
+                                                                     <div className="bg-crypto-card border border-crypto-border/60 rounded-lg p-2">
+                                                                         <div className="text-[9px] text-crypto-muted">Effective Budget</div>
+                                                                         <div className="text-xs font-bold text-crypto-heading font-mono">
+                                                                             {sig.effectiveBudget != null ? `$${Number(sig.effectiveBudget).toFixed(2)}` : '—'}
+                                                                         </div>
+                                                                     </div>
                                                                 </div>
                                                             </div>
                                                         </td>

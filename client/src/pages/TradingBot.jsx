@@ -569,6 +569,15 @@ export default function TradingBot() {
                             Positions
                         </button>
 
+                        {/* MC Scanner Link */}
+                        <button
+                            type="button"
+                            onClick={() => navigate('/scanner')}
+                            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-crypto-accent/10 border border-crypto-accent/25 text-xs font-bold text-crypto-accent hover:bg-crypto-accent/20 transition-colors"
+                        >
+                            MC Scanner
+                        </button>
+
                         <NotificationBell />
                     </div>
                 </div>

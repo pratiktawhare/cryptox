@@ -241,6 +241,19 @@ const Dashboard = () => {
                                 Auto Bot
                             </button>
 
+                            {/* MC Scanner link */}
+                            <button
+                                onClick={() => navigate('/scanner')}
+                                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold text-crypto-accent bg-crypto-accent/10 hover:bg-crypto-accent/20 transition-all duration-200 cursor-pointer border border-crypto-accent/20"
+                            >
+                                <svg className="w-4 h-4 text-crypto-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <circle cx="12" cy="12" r="10" />
+                                    <line x1="12" y1="8" x2="12" y2="12" />
+                                    <line x1="12" y1="12" x2="16" y2="14" />
+                                </svg>
+                                MC Scanner
+                            </button>
+
                             {/* Positions link */}
                             <button
                                 onClick={() => navigate('/positions')}
